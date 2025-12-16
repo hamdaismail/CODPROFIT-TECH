@@ -4,11 +4,12 @@ import {
   LayoutDashboard, Package, ShoppingBag, Megaphone, 
   Wallet, Settings, BarChart3, Moon, Sun, Plus, 
   FileSpreadsheet, Upload, Trash2, ArrowRight, UserCircle, LogOut,
-  Filter, Calendar, ChevronDown, X, Save, Edit3, Search, MoreHorizontal, CheckCircle, AlertCircle
+  Filter, Calendar, ChevronDown, X, Save, Edit3, Search, MoreHorizontal, CheckCircle, AlertCircle,
+  TrendingUp, Truck, DollarSign, CreditCard, Image as ImageIcon, Download, TestTube, StickyNote
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, 
-  LineChart, Line, Legend, AreaChart, Area 
+  LineChart, Line, Legend, AreaChart, Area, ComposedChart
 } from 'recharts';
 import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
@@ -32,6 +33,7 @@ const getDateRange = (filter: string, customStart?: string, customEnd?: string) 
     return new Date(date.setDate(diff));
   };
 
+  if (filter === 'custom' && customStart && customEnd) return { start: customStart, end: customEnd };
   if (filter === 'today') return { start: today, end: today };
   if (filter === 'yesterday') return { start: yesterday, end: yesterday };
   
@@ -63,6 +65,34 @@ const getDateRange = (filter: string, customStart?: string, customEnd?: string) 
   return { start: '2020-01-01', end: '2030-12-31' }; // All time
 };
 
+const formatCurrency = (amount: number, currency: 'USD' | 'MAD') => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(amount);
+};
+
+const downloadTemplate = (type: 'ADS' | 'CHARGES_FIXED' | 'CHARGES_TEST') => {
+    let data: any[] = [];
+    let name = "template";
+    if (type === 'ADS') {
+        data = [{ Date: "2023-10-25", Platform: "Facebook", Amount: 150.50, Product: "Smart Watch", Country: "MA" }];
+        name = "ads_spend_template";
+    } else if (type === 'CHARGES_FIXED') {
+        data = [{ Date: "2023-10-01", Description: "Office Rent", Product: "Smart Watch", Amount: 500, Country: "MA" }];
+        name = "fixed_charges_template";
+    } else {
+        data = [{ Date: "2023-10-05", Platform: "TikTok Test", Product: "Smart Watch", Amount: 50, Country: "MA", Note: "Initial Test" }];
+        name = "test_charges_template";
+    }
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template");
+    XLSX.writeFile(wb, `${name}.xlsx`);
+};
+
 // --- Global Context ---
 interface GlobalContextType {
   darkMode: boolean;
@@ -80,12 +110,16 @@ interface GlobalContextType {
   deleteProduct: (id: string) => void;
   
   addSale: (s: Sale) => void;
+  addSales: (s: Sale[]) => void;
   updateSale: (s: Sale) => void;
   deleteSale: (id: string) => void;
+  deleteSalesForProduct: (productId: string) => void;
 
   addExpense: (e: Expense) => void;
+  addExpenses: (e: Expense[]) => void;
   updateExpense: (e: Expense) => void;
   deleteExpense: (id: string) => void;
+  deleteExpensesForProduct: (productId: string) => void;
 
   addCountry: (c: CountrySettings) => void;
   updateCountry: (c: CountrySettings) => void;
@@ -106,17 +140,14 @@ const useGlobal = () => {
 // --- Mock Data ---
 const MOCK_COUNTRIES: CountrySettings[] = [
   { id: 'ma', code: 'MA', name: 'Morocco', currency_code: 'MAD', exchange_rate_to_usd: 0.1, service_fee: 30, service_fee_percentage: 0, is_primary: true },
-  { id: 'ga', code: 'GA', name: 'Gabon', currency_code: 'XAF', exchange_rate_to_usd: 0.0016, service_fee: 2000, service_fee_percentage: 10, is_primary: false }
 ];
 
 const MOCK_PRODUCTS: Product[] = [
-  { id: '1', name: 'Smart Watch Ultra', price_production: 15, price_shipping: 5, country: 'MA', note: 'Best seller' },
-  { id: '2', name: 'Beard Trimmer Pro', price_production: 8, price_shipping: 2, country: 'GA' },
+  { id: '1', name: 'Smart Watch Ultra', price_production: 15, price_shipping: 5, countries: ['MA'], note: 'Best seller' },
 ];
 
 const MOCK_SALES: Sale[] = [
   { id: '1', date: '2023-10-24', full_name: 'Ahmed Bennani', phone: '0600000000', product_id: '1', quantity: 1, total_price: 499, delivery_price: 30, status: OrderStatus.DELIVERED, country: 'MA' },
-  { id: '2', date: '2023-10-25', full_name: 'Jean Pierre', phone: '0611111111', product_id: '2', quantity: 1, total_price: 19000, delivery_price: 3900, status: OrderStatus.PROCESSED, country: 'GA' },
 ];
 
 // --- Main App ---
@@ -151,27 +182,39 @@ export default function App() {
   const toggleDarkMode = () => setDarkMode(!darkMode);
 
   // Actions
-  const addProduct = (p: Product) => setProducts([...products, p]);
-  const updateProduct = (p: Product) => setProducts(products.map(x => x.id === p.id ? p : x));
-  const deleteProduct = (id: string) => setProducts(products.filter(x => x.id !== id));
+  const addProduct = (p: Product) => setProducts(prev => [...prev, p]);
+  const updateProduct = (p: Product) => setProducts(prev => prev.map(x => x.id === p.id ? p : x));
+  const deleteProduct = (id: string) => setProducts(prev => prev.filter(x => x.id !== id));
 
-  const addSale = (s: Sale) => setSales([...sales, s]);
-  const updateSale = (s: Sale) => setSales(sales.map(x => x.id === s.id ? s : x));
-  const deleteSale = (id: string) => setSales(sales.filter(x => x.id !== id));
+  const addSale = (s: Sale) => setSales(prev => [...prev, s]);
+  const addSales = (newSales: Sale[]) => setSales(prev => [...prev, ...newSales]);
+  const updateSale = (s: Sale) => setSales(prev => prev.map(x => x.id === s.id ? s : x));
+  const deleteSale = (id: string) => setSales(prev => prev.filter(x => x.id !== id));
+  const deleteSalesForProduct = (productId: string) => setSales(prev => prev.filter(s => s.product_id !== productId));
 
-  const addExpense = (e: Expense) => setExpenses([...expenses, e]);
-  const updateExpense = (e: Expense) => setExpenses(expenses.map(x => x.id === e.id ? e : x));
-  const deleteExpense = (id: string) => setExpenses(expenses.filter(x => x.id !== id));
+  const addExpense = (e: Expense) => setExpenses(prev => [...prev, e]);
+  const addExpenses = (newExpenses: Expense[]) => setExpenses(prev => [...prev, ...newExpenses]);
+  const updateExpense = (e: Expense) => setExpenses(prev => prev.map(x => x.id === e.id ? e : x));
+  const deleteExpense = (id: string) => setExpenses(prev => prev.filter(x => x.id !== id));
+  const deleteExpensesForProduct = (productId: string) => setExpenses(prev => prev.filter(e => e.product_id !== productId));
 
-  const addCountry = (c: CountrySettings) => setCountries([...countries, c]);
-  const updateCountry = (c: CountrySettings) => {
-    let updated = countries.map(country => country.id === c.id ? c : country);
-    if (c.is_primary) {
-        updated = updated.map(u => u.id === c.id ? u : { ...u, is_primary: false });
-    }
-    setCountries(updated);
+  const addCountry = (c: CountrySettings) => {
+      if (c.is_primary) {
+          setCountries(prev => [...prev.map(x => ({...x, is_primary: false})), c]);
+      } else {
+          setCountries(prev => [...prev, c]);
+      }
   };
-  const deleteCountry = (id: string) => setCountries(countries.filter(x => x.id !== id));
+  const updateCountry = (c: CountrySettings) => {
+    setCountries(prev => {
+      let updated = prev.map(country => country.id === c.id ? c : country);
+      if (c.is_primary) {
+          updated = updated.map(u => u.id === c.id ? u : { ...u, is_primary: false });
+      }
+      return updated;
+    });
+  };
+  const deleteCountry = (id: string) => setCountries(prev => prev.filter(x => x.id !== id));
   
   const refreshData = () => { /* Fetch from Supabase */ };
 
@@ -180,8 +223,8 @@ export default function App() {
     products, sales, expenses, countries,
     refreshData, 
     addProduct, updateProduct, deleteProduct,
-    addSale, updateSale, deleteSale,
-    addExpense, updateExpense, deleteExpense,
+    addSale, addSales, updateSale, deleteSale, deleteSalesForProduct,
+    addExpense, addExpenses, updateExpense, deleteExpense, deleteExpensesForProduct,
     addCountry, updateCountry, deleteCountry,
     user, loading
   };
@@ -210,7 +253,8 @@ function Layout() {
             <Route path="/stock" element={<StockPage />} />
             <Route path="/sales" element={<SalesPage />} />
             <Route path="/ads" element={<AdsPage />} />
-            <Route path="/charges" element={<ChargesPage />} />
+            <Route path="/charges-fixed" element={<FixedChargesPage />} />
+            <Route path="/charges-test" element={<TestChargesPage />} />
             <Route path="/analyze" element={<AnalyzeProductsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
@@ -229,7 +273,8 @@ function Sidebar() {
     { icon: Package, label: 'Stock', path: '/stock' },
     { icon: ShoppingBag, label: 'Sales', path: '/sales' },
     { icon: Megaphone, label: 'Ads Spend', path: '/ads' },
-    { icon: Wallet, label: 'Charges', path: '/charges' },
+    { icon: Wallet, label: 'Fixed Charges', path: '/charges-fixed' },
+    { icon: TestTube, label: 'Test Charges', path: '/charges-test' },
     { icon: BarChart3, label: 'Analyze Products', path: '/analyze' },
     { icon: Settings, label: 'Settings', path: '/settings' },
   ];
@@ -293,43 +338,56 @@ function Header() {
 }
 
 // --- Dashboard ---
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-zinc-900 text-white text-xs p-3 rounded-lg shadow-xl border border-zinc-800">
+        <p className="font-semibold mb-2 text-zinc-400">{label}</p>
+        {payload.map((p: any) => (
+          <div key={p.name} className="flex items-center justify-between gap-4 mb-1">
+            <div className="flex items-center gap-2">
+               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
+               <span className="capitalize text-zinc-300">{p.name}:</span>
+            </div>
+            <span className="font-mono font-bold">{p.value.toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
 function Dashboard() {
   const { sales, expenses, products, currency, setCurrency, countries } = useGlobal();
   
   // Filters
   const [dateFilter, setDateFilter] = useState('this_month');
+  const [customStart, setCustomStart] = useState(formatDate(new Date()));
+  const [customEnd, setCustomEnd] = useState(formatDate(new Date()));
   const [selectedCountry, setSelectedCountry] = useState('all');
   const [selectedProduct, setSelectedProduct] = useState('all');
-  const { start, end } = getDateRange(dateFilter);
+  const { start, end } = getDateRange(dateFilter, customStart, customEnd);
 
-  // Helper: Convert Local Currency -> Display Currency (for Sales)
   const getLocalToDisplayRate = (countryCode: string) => {
     const country = countries.find(c => c.code === countryCode);
     if (!country) return 0;
-    
-    // Rate Local -> USD
-    const rateLocalToUSD = country.exchange_rate_to_usd;
-    
+    const rateLocalToUSD = country.exchange_rate_to_usd || 0;
     if (currency === 'USD') return rateLocalToUSD;
-
-    // Display is MAD. Convert USD -> MAD
     const madCountry = countries.find(c => c.code === 'MA');
     const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1;
-    
-    // Rate Local -> MAD = (Local -> USD) * (1 / (MAD -> USD))
+    if (madRateToUSD === 0) return 0; 
     return rateLocalToUSD * (1 / madRateToUSD);
   };
 
-  // Helper: Convert USD -> Display Currency (for Expenses/Stock)
   const getUsdToDisplayRate = () => {
     if (currency === 'USD') return 1;
-    // Display is MAD
     const madCountry = countries.find(c => c.code === 'MA');
-    const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1;
+    const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1; 
+    if (madRateToUSD === 0) return 0;
     return 1 / madRateToUSD;
   };
 
-  // Filter Data
   const filteredSales = sales.filter(s => {
     if (selectedCountry !== 'all' && s.country !== selectedCountry) return false;
     if (selectedProduct !== 'all' && s.product_id !== selectedProduct) return false;
@@ -342,22 +400,16 @@ function Dashboard() {
     return e.date >= start && e.date <= end;
   });
 
-  // Calculate Metrics
   let totalSales = 0;
-  let totalServiceFees = 0;
   let totalStockCost = 0;
+  const usdRate = getUsdToDisplayRate();
 
   filteredSales.forEach(s => {
     const localRate = getLocalToDisplayRate(s.country);
-    // Sale total_price is in Local Currency
     totalSales += s.total_price * localRate;
-    totalServiceFees += s.delivery_price * localRate;
-
     const product = products.find(p => p.id === s.product_id);
     if (product) {
-       // COGS is now in USD (as per user request)
        const productCostUsd = (product.price_production + product.price_shipping);
-       const usdRate = getUsdToDisplayRate();
        totalStockCost += (productCostUsd * s.quantity) * usdRate;
     }
   });
@@ -365,10 +417,14 @@ function Dashboard() {
   let totalAds = 0;
   let totalFixed = 0;
   let totalTest = 0;
-  const usdRate = getUsdToDisplayRate();
+  let totalServiceFees = 0;
+
+  filteredSales.forEach(s => {
+      const localRate = getLocalToDisplayRate(s.country);
+      totalServiceFees += s.delivery_price * localRate;
+  });
 
   filteredExpenses.forEach(e => {
-    // Expense Amount is in USD (as per user request)
     const val = e.amount * usdRate;
     if (e.type === 'ADS') totalAds += val;
     if (e.type === 'FIXED') totalFixed += val;
@@ -376,12 +432,9 @@ function Dashboard() {
   });
 
   const profit = totalSales - totalStockCost - totalServiceFees - totalAds - totalFixed - totalTest;
-  const currencySymbol = currency === 'USD' ? '$' : 'DH';
-
-  // Chart Data Preparation
+  
   const chartData = useMemo(() => {
     const dateMap = new Map<string, {name: string, sales: number, profit: number}>();
-    
     const addData = (date: string, salesAdd: number, profitAdd: number) => {
         if (!dateMap.has(date)) dateMap.set(date, { name: date, sales: 0, profit: 0 });
         const entry = dateMap.get(date)!;
@@ -392,52 +445,23 @@ function Dashboard() {
     filteredSales.forEach(s => {
        const localRate = getLocalToDisplayRate(s.country);
        const sVal = s.total_price * localRate;
-       
        const prod = products.find(p => p.id === s.product_id);
-       // COGS (USD -> Display)
        const costUsd = prod ? (prod.price_production + prod.price_shipping) : 0;
        const costVal = costUsd * s.quantity * usdRate;
-
        const fees = s.delivery_price * localRate;
        const pVal = sVal - costVal - fees;
        addData(s.date, sVal, pVal);
     });
 
     filteredExpenses.forEach(e => {
-       // Expense (USD -> Display)
        addData(e.date, 0, -(e.amount * usdRate));
     });
 
     return Array.from(dateMap.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [filteredSales, filteredExpenses, currency, products, countries]);
 
-  // Tooltip
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xl">
-          <p className="text-sm font-medium mb-2">{new Date(label).toDateString()}</p>
-          <div className="space-y-1">
-             <div className="flex items-center gap-2 text-xs">
-                 <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
-                 <span className="text-zinc-500">Sales:</span>
-                 <span className="font-mono">{currencySymbol}{payload[0].value.toFixed(0)}</span>
-             </div>
-             <div className="flex items-center gap-2 text-xs">
-                 <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                 <span className="text-zinc-500">Profit:</span>
-                 <span className="font-mono">{currencySymbol}{payload[1].value.toFixed(0)}</span>
-             </div>
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
-
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
-      {/* Header & Filter Bar */}
       <div className="flex flex-col gap-6">
         <div className="flex justify-between items-end">
              <div>
@@ -465,8 +489,17 @@ function Dashboard() {
                     <option value="this_month">This Month</option>
                     <option value="last_month">Last Month</option>
                     <option value="all">All Time</option>
+                    <option value="custom">Custom Date</option>
                  </select>
              </div>
+
+             {dateFilter === 'custom' && (
+                <div className="flex gap-1 items-center">
+                    <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1.5 text-sm" />
+                    <span className="text-zinc-400">-</span>
+                    <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1.5 text-sm" />
+                </div>
+             )}
 
              <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md">
                  <Filter size={14} className="text-zinc-400"/>
@@ -494,31 +527,44 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Total Sales" value={`${currencySymbol} ${totalSales.toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue={`${filteredSales.length} Orders`} icon={ShoppingBag} color="text-indigo-500" />
-        <StatCard title="Total Spend" value={`${currencySymbol} ${(totalStockCost + totalAds + totalServiceFees + totalFixed + totalTest).toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue="All Expenses" icon={Wallet} color="text-rose-500" />
-        <StatCard title="Total Ads" value={`${currencySymbol} ${totalAds.toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue="Marketing" icon={Megaphone} color="text-blue-500" />
-        <StatCard title="Net Profit" value={`${currencySymbol} ${profit.toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue={`${totalSales > 0 ? ((profit/totalSales)*100).toFixed(1) : 0}% Margin`} icon={BarChart3} color={profit >= 0 ? "text-emerald-500" : "text-red-500"} />
+        <StatCard title="Total Sales" value={formatCurrency(totalSales, currency)} subValue={`${filteredSales.length} Orders`} icon={ShoppingBag} color="text-indigo-500" />
+        <StatCard title="Total Spend" value={formatCurrency(totalStockCost + totalAds + totalServiceFees + totalFixed + totalTest, currency)} subValue="All Expenses" icon={Wallet} color="text-rose-500" />
+        <StatCard title="Ads Spend" value={formatCurrency(totalAds, currency)} subValue="Marketing" icon={Megaphone} color="text-blue-500" />
+        <StatCard title="Net Profit" value={formatCurrency(profit, currency)} subValue={`${totalSales > 0 ? ((profit/totalSales)*100).toFixed(1) : 0}% Margin`} icon={BarChart3} color={profit >= 0 ? "text-emerald-500" : "text-red-500"} />
       </div>
 
-      {/* Main Chart */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+         <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+             <div className="text-xs text-zinc-500 uppercase font-medium">Stock Cost</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalStockCost, currency)}</div>
+         </div>
+         <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+             <div className="text-xs text-zinc-500 uppercase font-medium">Service Fees</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalServiceFees, currency)}</div>
+         </div>
+         <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+             <div className="text-xs text-zinc-500 uppercase font-medium">Fixed Charges</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalFixed, currency)}</div>
+         </div>
+         <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+             <div className="text-xs text-zinc-500 uppercase font-medium">Test Charges</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalTest, currency)}</div>
+         </div>
+      </div>
+
       <Card className="h-[450px] p-0 overflow-hidden relative border-none ring-1 ring-zinc-200 dark:ring-zinc-800 shadow-lg">
           <div className="absolute top-6 left-6 z-10">
             <h3 className="font-medium text-lg">Profit & Sales Trend</h3>
             <p className="text-xs text-zinc-500">Daily performance breakdown</p>
           </div>
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 80, right: 0, left: 0, bottom: 0 }}>
+            <ComposedChart data={chartData} margin={{ top: 80, right: 20, left: 0, bottom: 0 }}>
               <defs>
-                <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                </linearGradient>
-                <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                </linearGradient>
+                 <linearGradient id="profitGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#333" opacity={0.05} />
               <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#a1a1aa', fontSize: 11}} dy={10} 
@@ -528,621 +574,247 @@ function Dashboard() {
                      }}
               />
               <Tooltip content={<CustomTooltip />} />
-              <Area type="monotone" dataKey="sales" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorSales)" />
-              <Area type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorProfit)" />
-            </AreaChart>
+              <Bar dataKey="sales" barSize={24} fill="#6366f1" radius={[6, 6, 0, 0]} />
+              <Area type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={3} fill="url(#profitGradient)" dot={{r: 4, strokeWidth: 2, fill: "#fff"}} activeDot={{r: 6}} />
+            </ComposedChart>
           </ResponsiveContainer>
       </Card>
     </div>
   );
 }
 
-// --- Sales Page ---
-function SalesPage() {
-  const { sales, addSale, updateSale, deleteSale, products, countries } = useGlobal();
-  const [mode, setMode] = useState<'list' | 'import' | 'manual'>('list');
-  const [editingId, setEditingId] = useState<string | null>(null);
-  
-  const defaultCountry = countries.length > 0 ? countries[0].code : 'MA';
-  const [form, setForm] = useState<Partial<Sale>>({
-    date: formatDate(new Date()),
-    status: OrderStatus.PROCESSED,
-    quantity: 1,
-    country: defaultCountry
-  });
-
-  // Import State
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [importData, setImportData] = useState<any[]>([]);
-  const [selectedImportCountry, setSelectedImportCountry] = useState(defaultCountry);
-
-  // Removed Country and Delivery Price from columns as requested
-  const [columns] = useState(['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R']);
-  const [mapping, setMapping] = useState<Record<string, string>>(() => {
-    return JSON.parse(localStorage.getItem('sales_import_mapping') || '{}');
-  });
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const bstr = evt.target?.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
-      const data = XLSX.utils.sheet_to_json(ws, { header: 'A' });
-      setImportData(data);
-    };
-    reader.readAsBinaryString(file);
-  };
-
-  const calculateFees = (countryCode: string, total: number) => {
-      const cSettings = countries.find(c => c.code === countryCode);
-      const fixed = cSettings?.service_fee || 0;
-      const pct = cSettings?.service_fee_percentage || 0;
-      return fixed + (total * pct / 100);
-  };
-
-  const processImport = () => {
-    if (importData.length === 0) return;
-    
-    let count = 0;
-    importData.forEach((row: any) => {
-       const sale: Partial<Sale> = {
-          id: generateId(),
-          date: formatDate(new Date()), // Default
-          status: OrderStatus.PROCESSED,
-          quantity: 1,
-          country: selectedImportCountry // Use selected country
-       };
-
-       const getVal = (field: string) => {
-          const col = mapping[field];
-          return row[col];
-       };
-
-       const dateRaw = getVal('Date');
-       if (dateRaw) sale.date = String(dateRaw).substring(0, 10); 
-       
-       sale.full_name = getVal('Full Name');
-       sale.phone = getVal('Phone');
-       sale.quantity = Number(getVal('Quantity')) || 1;
-       sale.total_price = Number(getVal('Total Price')) || 0;
-       
-       const prodName = getVal('Product');
-       const prod = products.find(p => p.name === prodName || p.id === prodName);
-       sale.product_id = prod?.id || products[0]?.id; // Fallback
-       
-       const statusRaw = getVal('Status');
-       sale.status = (statusRaw as OrderStatus) || OrderStatus.PROCESSED;
-       
-       // Calculate delivery price based on formula
-       sale.delivery_price = calculateFees(sale.country!, sale.total_price!);
-
-       addSale(sale as Sale);
-       count++;
-    });
-
-    alert(`Successfully imported ${count} orders.`);
-    setMode('list');
-    setImportData([]);
-  };
-
-  const saveMapping = () => {
-    localStorage.setItem('sales_import_mapping', JSON.stringify(mapping));
-    alert('Settings saved!'); // Confirm mapping save
-  };
-
-  const handleSave = () => {
-     // Auto calc fees on save
-     const delivery_price = calculateFees(form.country!, Number(form.total_price));
-     
-     const payload = {
-       ...form,
-       delivery_price: delivery_price, 
-       total_price: Number(form.total_price),
-       quantity: Number(form.quantity),
-     } as Sale;
-
-     if (editingId) {
-         updateSale({ ...payload, id: editingId });
-     } else {
-         addSale({ ...payload, id: generateId() });
-     }
-     setMode('list');
-     setEditingId(null);
-     setForm({ date: formatDate(new Date()), status: OrderStatus.PROCESSED, quantity: 1, country: defaultCountry });
-  };
-
-  const handleEdit = (s: Sale) => {
-      setForm(s);
-      setEditingId(s.id);
-      setMode('manual');
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-light">Sales Orders</h1>
-        <div className="flex gap-2">
-           <Button variant="secondary" onClick={() => setMode('import')}><FileSpreadsheet size={16} className="mr-2"/> Import Excel</Button>
-           <Button variant="accent" onClick={() => { setEditingId(null); setMode('manual'); }}><Plus size={16} className="mr-2"/> Add Manual</Button>
-        </div>
-      </div>
-
-      {mode === 'manual' && (
-         <Card className="animate-in fade-in slide-in-from-top-4 max-w-2xl mx-auto">
-            <h3 className="text-lg font-medium mb-4">{editingId ? 'Edit Order' : 'Add New Order'}</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-               <Input label="Date" type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
-               <Input label="Full Name" value={form.full_name} onChange={e => setForm({...form, full_name: e.target.value})} />
-               <Input label="Phone" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} />
-               <Select label="Country" value={form.country} onChange={e => setForm({...form, country: e.target.value})} options={countries.map(c => ({value: c.code, label: c.name}))} />
-               <Select label="Product" value={form.product_id} onChange={e => setForm({...form, product_id: e.target.value})} options={products.map(p => ({value: p.id, label: p.name}))} />
-               <Input label="Quantity" type="number" value={form.quantity} onChange={e => setForm({...form, quantity: Number(e.target.value)})} />
-               <Input label="Total Price (Local Currency)" type="number" value={form.total_price} onChange={e => setForm({...form, total_price: Number(e.target.value)})} />
-               <Select label="Status" value={form.status} onChange={e => setForm({...form, status: e.target.value as OrderStatus})} options={Object.keys(OrderStatus).map(s => ({value: s, label: s}))} />
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-               <Button variant="ghost" onClick={() => setMode('list')}>Cancel</Button>
-               <Button variant="primary" onClick={handleSave}>Save Order</Button>
-            </div>
-         </Card>
-      )}
-
-      {mode === 'import' && (
-        <Card className="animate-in fade-in zoom-in-95">
-           <div className="mb-8 text-center">
-              <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx, .xls" className="hidden" />
-              <div onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl p-12 hover:border-accent transition-colors cursor-pointer bg-zinc-50/50 dark:bg-zinc-900/50">
-                  <Upload className="mx-auto h-12 w-12 text-zinc-400 mb-4" />
-                  <h3 className="text-lg font-medium">{importData.length > 0 ? `${importData.length} Rows Loaded` : 'Click to Upload Excel'}</h3>
-              </div>
-           </div>
-
-           {importData.length > 0 && (
-             <div className="space-y-4">
-                <div className="p-4 bg-zinc-50 dark:bg-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-700">
-                    <Select 
-                        label="Select Country for Import" 
-                        value={selectedImportCountry} 
-                        onChange={e => setSelectedImportCountry(e.target.value)} 
-                        options={countries.map(c => ({value: c.code, label: c.name}))}
-                    />
-                </div>
-                <div className="flex justify-between items-center">
-                    <h4 className="text-sm font-medium uppercase tracking-wider text-zinc-500">Map Columns</h4>
-                    <Button variant="secondary" size="sm" onClick={saveMapping}><Save size={14} className="mr-2"/> Save Mapping</Button>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                   {['Date', 'Full Name', 'Phone', 'Product', 'Quantity', 'Total Price', 'Status'].map(field => (
-                     <div key={field} className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-700">
-                        <label className="text-xs font-bold text-accent mb-1 block">{field}</label>
-                        <Select 
-                          value={mapping[field] || ''} 
-                          onChange={e => setMapping({...mapping, [field]: e.target.value})}
-                          options={[{value: '', label: 'Select Column'}, ...columns.map(c => ({value: c, label: `Column ${c}`}))]} 
-                        />
-                     </div>
-                   ))}
-                </div>
-                <div className="flex justify-end mt-6 gap-3">
-                  <Button variant="ghost" onClick={() => { setImportData([]); setMode('list'); }}>Cancel</Button>
-                  <Button variant="primary" onClick={processImport}>Import {importData.length} Rows</Button>
-                </div>
-             </div>
-           )}
-           {importData.length === 0 && <Button variant="ghost" onClick={() => setMode('list')}>Back</Button>}
-        </Card>
-      )}
-
-      {mode === 'list' && (
-        <Card className="p-0 overflow-hidden overflow-x-auto border-zinc-200 dark:border-zinc-800">
-          <table className="w-full text-left text-xs md:text-sm whitespace-nowrap">
-            <thead className="bg-zinc-50 dark:bg-zinc-900/50 text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
-              <tr>
-                <th className="px-6 py-4 font-semibold">Date</th>
-                <th className="px-6 py-4 font-semibold">Customer</th>
-                <th className="px-6 py-4 font-semibold">Product</th>
-                <th className="px-6 py-4 font-semibold text-right">Total Pay</th>
-                <th className="px-6 py-4 font-semibold text-center">Status</th>
-                <th className="px-6 py-4 font-semibold text-center">Country</th>
-                <th className="px-6 py-4 font-semibold text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/50">
-              {sales.map(s => {
-                const prod = products.find(p => p.id === s.product_id);
-                const net = s.total_price - s.delivery_price;
-                return (
-                <tr key={s.id} className="group hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors">
-                  <td className="px-6 py-4 text-zinc-500">{s.date}</td>
-                  <td className="px-6 py-4 font-medium">
-                      <div className="text-zinc-900 dark:text-zinc-200">{s.full_name}</div>
-                      <div className="text-xs text-zinc-400 font-light">{s.phone}</div>
-                  </td>
-                  <td className="px-6 py-4 text-zinc-600 dark:text-zinc-400">{prod?.name || 'Unknown'}</td>
-                  <td className="px-6 py-4 font-mono font-bold text-emerald-600 dark:text-emerald-400 text-right">{net.toLocaleString()}</td>
-                  <td className="px-6 py-4 text-center">
-                    <Badge variant={s.status === OrderStatus.DELIVERED ? 'success' : s.status === OrderStatus.PAID ? 'info' : 'warning'}>
-                      {s.status}
-                    </Badge>
-                  </td>
-                  <td className="px-6 py-4 text-center"><Badge>{s.country}</Badge></td>
-                  <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => handleEdit(s)} className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded text-zinc-400 hover:text-accent"><Edit3 size={14}/></button>
-                        <button onClick={() => deleteSale(s.id)} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-zinc-400 hover:text-red-500"><Trash2 size={14}/></button>
-                      </div>
-                  </td>
-                </tr>
-              )})}
-            </tbody>
-          </table>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-// --- Stock Page ---
-function StockPage() {
-  const { products, addProduct, updateProduct, deleteProduct, countries } = useGlobal();
-  const [showModal, setShowModal] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const defaultCountry = countries.length > 0 ? countries[0].code : 'MA';
-  const [form, setForm] = useState<Partial<Product>>({ country: defaultCountry, price_production: 0, price_shipping: 0 });
-
-  const handleSave = () => {
-      const payload = { ...form, id: editingId || generateId() } as Product;
-      if (editingId) updateProduct(payload);
-      else addProduct(payload);
-      setShowModal(false);
-      setEditingId(null);
-      setForm({ country: defaultCountry, price_production: 0, price_shipping: 0 });
-  };
-
-  const handleEdit = (p: Product) => {
-      setForm(p);
-      setEditingId(p.id);
-      setShowModal(true);
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-light">Inventory</h1>
-        <Button variant="accent" onClick={() => { setEditingId(null); setShowModal(true); }}><Plus size={16} className="mr-2"/> Add Product</Button>
-      </div>
-
-      {showModal && (
-        <Card className="mb-6 animate-in fade-in slide-in-from-top-4">
-           <h3 className="font-medium mb-4">{editingId ? 'Edit Product' : 'Add Product'}</h3>
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-             <Input label="Product Name" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-             <Select label="Country" value={form.country} options={countries.map(c => ({value: c.code, label: c.name}))} onChange={e => setForm({...form, country: e.target.value})} />
-             <Input label="Production Cost ($)" type="number" value={form.price_production} onChange={e => setForm({...form, price_production: parseFloat(e.target.value || '0')})} />
-             <Input label="Shipping Cost ($)" type="number" value={form.price_shipping} onChange={e => setForm({...form, price_shipping: parseFloat(e.target.value || '0')})} />
-             <Input label="Note" value={form.note} onChange={e => setForm({...form, note: e.target.value})} className="md:col-span-2" />
-           </div>
-           
-           <div className="bg-zinc-50 dark:bg-zinc-800 p-4 rounded-lg mb-4 flex justify-between items-center">
-              <span className="text-sm font-medium text-zinc-500">Total Cost per Unit (USD)</span>
-              <span className="text-xl font-bold text-accent">
-                 ${((form.price_production || 0) + (form.price_shipping || 0)).toFixed(2)}
-              </span>
-           </div>
-
-           <div className="flex justify-end gap-2">
-             <Button variant="ghost" onClick={() => setShowModal(false)}>Cancel</Button>
-             <Button variant="primary" onClick={handleSave}>Save Product</Button>
-           </div>
-        </Card>
-      )}
-
-      <Card className="p-0 overflow-hidden">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-zinc-50 dark:bg-zinc-800/50 text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
-            <tr>
-              <th className="px-6 py-4">Product Name</th>
-              <th className="px-6 py-4">Total Cost (USD)</th>
-              <th className="px-6 py-4">Country</th>
-              <th className="px-6 py-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-            {products.map(p => (
-              <tr key={p.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors">
-                <td className="px-6 py-4 font-medium text-zinc-900 dark:text-zinc-100">{p.name}</td>
-                <td className="px-6 py-4 font-bold text-accent">${p.price_production + p.price_shipping}</td>
-                <td className="px-6 py-4"><Badge>{p.country}</Badge></td>
-                <td className="px-6 py-4 flex gap-2">
-                   <button onClick={() => handleEdit(p)} className="text-zinc-400 hover:text-accent"><Edit3 size={16}/></button>
-                   <button onClick={() => deleteProduct(p.id)} className="text-zinc-400 hover:text-red-500"><Trash2 size={16}/></button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-    </div>
-  );
-}
-
-// --- Ads Page ---
-function AdsPage() {
-    const { expenses, addExpense, updateExpense, deleteExpense, countries, products } = useGlobal();
-    const [showModal, setShowModal] = useState(false);
-    const [editingId, setEditingId] = useState<string | null>(null);
-    const defaultCountry = countries.length > 0 ? countries[0].code : 'MA';
-    const [form, setForm] = useState<Partial<Expense>>({ type: 'ADS', date: formatDate(new Date()), country: defaultCountry });
-
-    const handleSave = () => {
-        const payload = { ...form, id: editingId || generateId(), type: 'ADS' } as Expense;
-        if (editingId) updateExpense(payload);
-        else addExpense(payload);
-        setShowModal(false);
-        setEditingId(null);
-        setForm({ type: 'ADS', date: formatDate(new Date()), country: defaultCountry });
-    };
-
-    const handleEdit = (e: Expense) => {
-        setForm(e);
-        setEditingId(e.id);
-        setShowModal(true);
-    };
-
-    return (
-        <div className="space-y-6">
-             <div className="flex justify-between items-center">
-                <h1 className="text-2xl font-light">Ad Spend</h1>
-                <Button variant="accent" onClick={() => { setEditingId(null); setShowModal(true); }}>Add Spend</Button>
-            </div>
-
-            {showModal && (
-                <Card className="animate-in fade-in slide-in-from-top-4">
-                    <h3 className="font-medium mb-4">{editingId ? 'Edit Ad Spend' : 'Record Ad Spend'}</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <Input label="Date" type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
-                        <Input label="Amount ($)" type="number" value={form.amount} onChange={e => setForm({...form, amount: Number(e.target.value)})} />
-                        <div>
-                            <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider ml-1">Platform</label>
-                            <input 
-                                list="platforms" 
-                                className="flex h-10 w-full rounded-md border border-zinc-200 dark:border-zinc-800 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 mt-1.5"
-                                value={form.platform} 
-                                onChange={e => setForm({...form, platform: e.target.value})} 
-                                placeholder="Select or type..."
-                            />
-                            <datalist id="platforms">
-                                <option value="Facebook" />
-                                <option value="TikTok" />
-                                <option value="Google" />
-                                <option value="Snapchat" />
-                            </datalist>
-                        </div>
-                        <Select label="Country" value={form.country} onChange={e => setForm({...form, country: e.target.value})} options={countries.map(c => ({value: c.code, label: c.name}))} />
-                        <Select label="Linked Product (Optional)" value={form.product_id} onChange={e => setForm({...form, product_id: e.target.value})} options={[{value: '', label: 'None'}, ...products.map(p => ({value: p.id, label: p.name}))]} />
-                    </div>
-                    <div className="flex justify-end gap-2 mt-4">
-                        <Button variant="ghost" onClick={() => setShowModal(false)}>Cancel</Button>
-                        <Button variant="primary" onClick={handleSave}>Save Spend</Button>
-                    </div>
-                </Card>
-            )}
-
-            <Card className="p-0 overflow-hidden">
-                <table className="w-full text-left text-sm">
-                    <thead className="bg-zinc-50 dark:bg-zinc-800/50 text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
-                        <tr>
-                            <th className="px-6 py-4">Date</th>
-                            <th className="px-6 py-4">Platform</th>
-                            <th className="px-6 py-4">Product</th>
-                            <th className="px-6 py-4">Amount ($)</th>
-                            <th className="px-6 py-4">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                        {expenses.filter(e => e.type === 'ADS').map(e => (
-                            <tr key={e.id}>
-                                <td className="px-6 py-4">{e.date}</td>
-                                <td className="px-6 py-4">{e.platform}</td>
-                                <td className="px-6 py-4">{products.find(p => p.id === e.product_id)?.name || '-'}</td>
-                                <td className="px-6 py-4 font-mono">${e.amount}</td>
-                                <td className="px-6 py-4 flex gap-2">
-                                    <button onClick={() => handleEdit(e)} className="text-zinc-400 hover:text-accent"><Edit3 size={16}/></button>
-                                    <button onClick={() => deleteExpense(e.id)} className="text-zinc-400 hover:text-red-500"><Trash2 size={16}/></button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </Card>
-        </div>
-    )
-}
-
-// --- Charges Page ---
-function ChargesPage() {
-    const { expenses, addExpense, updateExpense, deleteExpense, countries, products } = useGlobal();
-    const [tab, setTab] = useState<'FIXED' | 'TEST'>('FIXED');
-    const [showModal, setShowModal] = useState(false);
-    const [editingId, setEditingId] = useState<string | null>(null);
-    const defaultCountry = countries.length > 0 ? countries[0].code : 'MA';
-    const [form, setForm] = useState<Partial<Expense>>({ date: formatDate(new Date()), country: defaultCountry });
-
-    const handleSave = () => {
-        const payload = { ...form, type: tab, id: editingId || generateId() } as Expense;
-        if (editingId) updateExpense(payload);
-        else addExpense(payload);
-        setShowModal(false);
-        setEditingId(null);
-        setForm({ date: formatDate(new Date()), country: defaultCountry });
-    };
-
-    const handleEdit = (e: Expense) => {
-        setForm(e);
-        setEditingId(e.id);
-        setShowModal(true);
-    };
-
-    return (
-        <div className="space-y-6">
-             <div className="flex justify-between items-center">
-                <h1 className="text-2xl font-light">Charges</h1>
-                <Button variant="accent" onClick={() => { setEditingId(null); setShowModal(true); }}>Add {tab === 'FIXED' ? 'Fixed' : 'Test'} Charge</Button>
-            </div>
-
-            <div className="flex gap-4 border-b border-zinc-200 dark:border-zinc-800">
-                <button onClick={() => setTab('FIXED')} className={`pb-2 px-1 text-sm font-medium transition-all ${tab === 'FIXED' ? 'border-b-2 border-accent text-accent' : 'text-zinc-500'}`}>Fixed Charges</button>
-                <button onClick={() => setTab('TEST')} className={`pb-2 px-1 text-sm font-medium transition-all ${tab === 'TEST' ? 'border-b-2 border-accent text-accent' : 'text-zinc-500'}`}>Test Charges</button>
-            </div>
-
-            {showModal && (
-                <Card className="animate-in fade-in slide-in-from-top-4">
-                     <h3 className="font-medium mb-4">{editingId ? 'Edit Charge' : `Add ${tab === 'FIXED' ? 'Fixed' : 'Test'} Charge`}</h3>
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <Input label="Date" type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
-                        
-                        {tab === 'FIXED' && (
-                            <div>
-                                <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider ml-1">Charge Name</label>
-                                <input 
-                                    list="charge-types" 
-                                    className="flex h-10 w-full rounded-md border border-zinc-200 dark:border-zinc-800 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 mt-1.5"
-                                    value={form.name} 
-                                    onChange={e => setForm({...form, name: e.target.value})} 
-                                    placeholder="Select or type..."
-                                />
-                                <datalist id="charge-types">
-                                    <option value="Product Charge" />
-                                    <option value="Store Fees" />
-                                    <option value="Office Rent" />
-                                </datalist>
-                            </div>
-                        )}
-
-                        {tab === 'TEST' && (
-                             <Input label="Platform" value={form.platform} onChange={e => setForm({...form, platform: e.target.value})} placeholder="e.g. Facebook" />
-                        )}
-
-                        <Input label="Amount ($)" type="number" value={form.amount} onChange={e => setForm({...form, amount: Number(e.target.value)})} />
-                        <Select label="Country" value={form.country} onChange={e => setForm({...form, country: e.target.value})} options={countries.map(c => ({value: c.code, label: c.name}))} />
-                        
-                        <Select label="Linked Product (Optional)" value={form.product_id} onChange={e => setForm({...form, product_id: e.target.value})} options={[{value: '', label: 'None'}, ...products.map(p => ({value: p.id, label: p.name}))]} />
-                        
-                        <Input label="Note" value={form.note} onChange={e => setForm({...form, note: e.target.value})} className="md:col-span-2" />
-                     </div>
-                     <div className="flex justify-end gap-2 mt-4">
-                         <Button variant="ghost" onClick={() => setShowModal(false)}>Cancel</Button>
-                         <Button variant="primary" onClick={handleSave}>Save Charge</Button>
-                     </div>
-                </Card>
-            )}
-
-            <Card className="p-0 overflow-hidden">
-                <table className="w-full text-left text-sm">
-                    <thead className="bg-zinc-50 dark:bg-zinc-800/50 text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
-                        <tr>
-                            <th className="px-6 py-4">Date</th>
-                            <th className="px-6 py-4">{tab === 'FIXED' ? 'Description' : 'Platform'}</th>
-                            <th className="px-6 py-4">Amount ($)</th>
-                            <th className="px-6 py-4">Country</th>
-                            <th className="px-6 py-4">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                         {expenses.filter(e => e.type === tab).map(e => (
-                             <tr key={e.id}>
-                                 <td className="px-6 py-4">{e.date}</td>
-                                 <td className="px-6 py-4">{tab === 'FIXED' ? e.name : e.platform}</td>
-                                 <td className="px-6 py-4 font-mono">${e.amount}</td>
-                                 <td className="px-6 py-4"><Badge>{e.country}</Badge></td>
-                                 <td className="px-6 py-4 flex gap-2">
-                                    <button onClick={() => handleEdit(e)} className="text-zinc-400 hover:text-accent"><Edit3 size={16}/></button>
-                                    <button onClick={() => deleteExpense(e.id)} className="text-zinc-400 hover:text-red-500"><Trash2 size={16}/></button>
-                                 </td>
-                             </tr>
-                         ))}
-                    </tbody>
-                </table>
-            </Card>
-        </div>
-    )
-}
-
-// --- Analyze Products Page ---
+// --- Analyze Page ---
 function AnalyzeProductsPage() {
-    const { products, sales, expenses, countries } = useGlobal();
+  const { products, sales, expenses, currency, countries } = useGlobal();
+  
+  // Filters for chart and analysis
+  const [dateRange, setDateRange] = useState<'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'custom'>('this_month');
+  const [customStart, setCustomStart] = useState(formatDate(new Date()));
+  const [customEnd, setCustomEnd] = useState(formatDate(new Date()));
+  const [selectedCountry, setSelectedCountry] = useState('all');
+  const [selectedProduct, setSelectedProduct] = useState('all'); // Allows single product selection
 
-    return (
-        <div className="space-y-6">
+  const { start, end } = getDateRange(dateRange, customStart, customEnd);
+
+  const getRate = (countryCode: string) => {
+    const country = countries.find(c => c.code === countryCode);
+    if (!country) return 0;
+    const rateLocalToUSD = country.exchange_rate_to_usd || 0;
+    if (currency === 'USD') return rateLocalToUSD;
+    const madCountry = countries.find(c => c.code === 'MA');
+    const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1;
+    if (madRateToUSD === 0) return 0; 
+    return rateLocalToUSD * (1 / madRateToUSD);
+  };
+  
+  const usdDisplayRate = currency === 'USD' ? 1 : (1 / (countries.find(c => c.code === 'MA')?.exchange_rate_to_usd || 0.1));
+
+  // --- Chart Data Logic ---
+  const chartData = useMemo(() => {
+      const dayMap = new Map<string, { date: string, sales: number, profit: number, cost: number, ads: number }>();
+      
+      // Helper to init day
+      const initDay = (d: string) => {
+          if (!dayMap.has(d)) dayMap.set(d, { date: d, sales: 0, profit: 0, cost: 0, ads: 0 });
+      };
+
+      // Filter
+      const relevantSales = sales.filter(s => {
+          if (selectedProduct !== 'all' && s.product_id !== selectedProduct) return false;
+          if (selectedCountry !== 'all' && s.country !== selectedCountry) return false;
+          return s.date >= start && s.date <= end;
+      });
+
+      const relevantExpenses = expenses.filter(e => {
+          if (selectedProduct !== 'all' && e.product_id !== selectedProduct) return false;
+          if (selectedCountry !== 'all' && e.country !== selectedCountry) return false;
+          return e.date >= start && e.date <= end;
+      });
+
+      relevantSales.forEach(s => {
+          initDay(s.date);
+          const entry = dayMap.get(s.date)!;
+          const rate = getRate(s.country);
+          const revenue = s.total_price * rate;
+          const fees = s.delivery_price * rate;
+          
+          const prod = products.find(p => p.id === s.product_id);
+          const stock = prod ? (prod.price_production + prod.price_shipping) * s.quantity * usdDisplayRate : 0;
+
+          entry.sales += revenue;
+          entry.cost += stock + fees;
+      });
+
+      relevantExpenses.forEach(e => {
+          initDay(e.date);
+          const entry = dayMap.get(e.date)!;
+          const amount = e.amount * usdDisplayRate;
+          if (e.type === 'ADS') entry.ads += amount;
+          else entry.cost += amount; // Charges as cost
+      });
+
+      // Calc profit per day
+      for (const val of dayMap.values()) {
+          val.profit = val.sales - val.cost - val.ads;
+      }
+
+      return Array.from(dayMap.values()).sort((a,b) => a.date.localeCompare(b.date));
+  }, [sales, expenses, products, start, end, selectedProduct, selectedCountry, currency, countries]);
+
+  // --- Table/Summary Logic ---
+  const stats = useMemo(() => {
+    // If a single product is selected, we just show that one product in the list/table logic
+    // If all, we show list of all.
+    const productsToShow = selectedProduct === 'all' ? products : products.filter(p => p.id === selectedProduct);
+
+    return productsToShow.map(product => {
+        const productSales = sales.filter(s => s.product_id === product.id && s.date >= start && s.date <= end && (selectedCountry === 'all' || s.country === selectedCountry));
+        const productExpenses = expenses.filter(e => e.product_id === product.id && e.date >= start && e.date <= end && (selectedCountry === 'all' || e.country === selectedCountry));
+        
+        let revenue = 0;
+        let fees = 0;
+        let stockCost = 0;
+  
+        productSales.forEach(s => {
+            const rate = getRate(s.country);
+            revenue += s.total_price * rate;
+            fees += s.delivery_price * rate;
+            stockCost += (product.price_production + product.price_shipping) * s.quantity * usdDisplayRate;
+        });
+  
+        let marketing = 0;
+        let otherCharges = 0;
+        productExpenses.forEach(e => {
+            const amt = e.amount * usdDisplayRate;
+            if (e.type === 'ADS') marketing += amt;
+            else otherCharges += amt;
+        });
+  
+        const profit = revenue - stockCost - fees - marketing - otherCharges;
+        const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
+        const roi = (stockCost + marketing + otherCharges) > 0 ? (profit / (stockCost + marketing + otherCharges)) * 100 : 0;
+  
+        return {
+            ...product,
+            revenue,
+            profit,
+            margin,
+            roi,
+            salesCount: productSales.length,
+            ads: marketing,
+            charges: otherCharges + fees + stockCost // Total Cost bucket for simple display
+        };
+    }).sort((a,b) => b.profit - a.profit);
+  }, [products, sales, expenses, currency, countries, start, end, selectedProduct, selectedCountry]);
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <h1 className="text-2xl font-light">Product Analysis</h1>
             
-            <div className="grid grid-cols-1 gap-6">
-                {products.map(product => {
-                    const prodSales = sales.filter(s => s.product_id === product.id);
-                    const prodExpenses = expenses.filter(e => e.product_id === product.id); 
-                    
-                    // Sales Revenue in Local Currency -> Need to normalize to a common one for display (e.g. USD)
-                    // Let's assume this page displays in USD for consistency with costs
-                    let totalRevenueUSD = 0;
-                    let deliveryFeesUSD = 0;
-                    
-                    prodSales.forEach(s => {
-                        const country = countries.find(c => c.code === s.country);
-                        const rate = country?.exchange_rate_to_usd || 0;
-                        totalRevenueUSD += s.total_price * rate;
-                        deliveryFeesUSD += s.delivery_price * rate;
-                    });
-
-                    const totalUnits = prodSales.reduce((acc, s) => acc + s.quantity, 0);
-                    // Costs are USD
-                    const costOfGoodsUSD = totalUnits * (product.price_production + product.price_shipping);
-                    const specificExpensesUSD = prodExpenses.reduce((acc, e) => acc + e.amount, 0);
-
-                    const grossProfitUSD = totalRevenueUSD - costOfGoodsUSD - deliveryFeesUSD - specificExpensesUSD;
-
-                    return (
-                        <Card key={product.id}>
-                            <div className="flex justify-between items-start mb-4">
-                                <div>
-                                    <h3 className="text-xl font-medium">{product.name}</h3>
-                                    <div className="flex gap-2 mt-1">
-                                        <Badge>{product.country}</Badge>
-                                        <span className="text-xs text-zinc-500 flex items-center">{totalUnits} orders</span>
-                                    </div>
-                                </div>
-                                <div className={`text-2xl font-light ${grossProfitUSD >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                                    ${grossProfitUSD.toFixed(2)}
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                                <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded">
-                                    <div className="text-zinc-500">Revenue (Est. USD)</div>
-                                    <div className="font-medium text-lg">${totalRevenueUSD.toFixed(0)}</div>
-                                </div>
-                                <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded">
-                                    <div className="text-zinc-500">COGS</div>
-                                    <div className="font-medium text-lg text-red-400">-${costOfGoodsUSD.toFixed(0)}</div>
-                                </div>
-                                <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded">
-                                    <div className="text-zinc-500">Service Fees</div>
-                                    <div className="font-medium text-lg text-red-400">-${deliveryFeesUSD.toFixed(0)}</div>
-                                </div>
-                                <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded">
-                                    <div className="text-zinc-500">Ad/Test Spend</div>
-                                    <div className="font-medium text-lg text-red-400">-${specificExpensesUSD.toFixed(0)}</div>
-                                </div>
-                            </div>
-                        </Card>
-                    )
-                })}
+            {/* Filters */}
+            <div className="flex flex-wrap gap-2 items-center bg-white dark:bg-zinc-800 p-2 rounded-lg border border-zinc-200 dark:border-zinc-700 shadow-sm">
+                 <div className="flex items-center gap-2 px-2 border-r border-zinc-200 dark:border-zinc-700">
+                     <Calendar size={14} className="text-zinc-400"/>
+                     <select value={dateRange} onChange={e => setDateRange(e.target.value as any)} className="bg-transparent text-sm focus:outline-none">
+                        <option value="today">Today</option>
+                        <option value="yesterday">Yesterday</option>
+                        <option value="this_week">This Week</option>
+                        <option value="this_month">This Month</option>
+                        <option value="custom">Custom</option>
+                     </select>
+                 </div>
+                 {dateRange === 'custom' && (
+                    <div className="flex gap-1 items-center px-2 border-r border-zinc-200 dark:border-zinc-700">
+                        <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="bg-transparent text-xs w-24"/>
+                        <span className="text-zinc-400">-</span>
+                        <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="bg-transparent text-xs w-24"/>
+                    </div>
+                 )}
+                 <select value={selectedCountry} onChange={e => setSelectedCountry(e.target.value)} className="bg-transparent text-sm focus:outline-none px-2 border-r border-zinc-200 dark:border-zinc-700">
+                      <option value="all">All Countries</option>
+                      {countries.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+                 </select>
+                 <select value={selectedProduct} onChange={e => setSelectedProduct(e.target.value)} className="bg-transparent text-sm focus:outline-none px-2 font-medium min-w-[120px]">
+                      <option value="all">All Products</option>
+                      {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                 </select>
             </div>
         </div>
-    )
+
+        {/* Chart Section */}
+        <Card className="h-[400px] p-0 overflow-hidden relative">
+             <div className="absolute top-6 left-6 z-10">
+                <h3 className="font-medium text-lg">Performance Trend</h3>
+                <p className="text-xs text-zinc-500">{selectedProduct === 'all' ? 'All Products' : products.find(p => p.id === selectedProduct)?.name}</p>
+             </div>
+             <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={chartData} margin={{ top: 80, right: 30, left: 10, bottom: 10 }}>
+                  <defs>
+                     <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.1}/>
+                        <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                     </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#333" opacity={0.05} />
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#a1a1aa', fontSize: 11}} dy={10} 
+                         tickFormatter={(str) => {
+                             const d = new Date(str);
+                             return `${d.getDate()}/${d.getMonth()+1}`;
+                         }}
+                  />
+                  <Tooltip 
+                    contentStyle={{backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '8px', color: '#fff'}}
+                    itemStyle={{fontSize: '12px'}}
+                    labelStyle={{color: '#a1a1aa', marginBottom: '8px', fontSize: '12px'}}
+                    formatter={(value: any) => formatCurrency(value, currency)}
+                  />
+                  <Bar dataKey="sales" name="Sales" barSize={20} fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                  <Line type="monotone" dataKey="profit" name="Profit" stroke="#10b981" strokeWidth={2} dot={{r: 3}} />
+                  <Area type="monotone" dataKey="ads" name="Ads Spend" stroke="#3b82f6" fill="none" strokeWidth={2} strokeDasharray="5 5" />
+                </ComposedChart>
+             </ResponsiveContainer>
+        </Card>
+
+        {/* Detailed Cards List */}
+        <div className="grid grid-cols-1 gap-4">
+            {stats.map(p => (
+                <Card key={p.id} className="flex flex-col md:flex-row gap-6 items-center p-4">
+                    <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0 flex items-center justify-center">
+                         {p.image ? <img src={p.image} className="w-full h-full object-cover" /> : <Package className="text-zinc-400" size={24}/>}
+                    </div>
+                    <div className="flex-1 w-full text-center md:text-left">
+                        <h3 className="text-lg font-medium">{p.name}</h3>
+                        <p className="text-xs text-zinc-500">{p.salesCount} orders • {p.countries.join(', ')}</p>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 w-full md:w-auto text-center">
+                         <div className="p-2 bg-zinc-50 dark:bg-zinc-900 rounded border border-zinc-100 dark:border-zinc-800 min-w-[100px]">
+                             <div className="text-[10px] text-zinc-500 uppercase font-medium">Revenue</div>
+                             <div className="font-mono font-bold text-sm">{formatCurrency(p.revenue, currency)}</div>
+                         </div>
+                         <div className="p-2 bg-zinc-50 dark:bg-zinc-900 rounded border border-zinc-100 dark:border-zinc-800 min-w-[100px]">
+                             <div className="text-[10px] text-zinc-500 uppercase font-medium">Profit</div>
+                             <div className={`font-mono font-bold text-sm ${p.profit >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                 {formatCurrency(p.profit, currency)}
+                             </div>
+                         </div>
+                         <div className="p-2 bg-zinc-50 dark:bg-zinc-900 rounded border border-zinc-100 dark:border-zinc-800 min-w-[100px]">
+                             <div className="text-[10px] text-zinc-500 uppercase font-medium">Margin</div>
+                             <div className={`font-mono font-bold text-sm ${p.margin >= 20 ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                 {p.margin.toFixed(1)}%
+                             </div>
+                         </div>
+                         <div className="p-2 bg-zinc-50 dark:bg-zinc-900 rounded border border-zinc-100 dark:border-zinc-800 min-w-[100px]">
+                             <div className="text-[10px] text-zinc-500 uppercase font-medium">ROI</div>
+                             <div className="font-mono font-bold text-sm">{p.roi.toFixed(1)}%</div>
+                         </div>
+                    </div>
+                </Card>
+            ))}
+            {stats.length === 0 && <div className="text-center text-zinc-500 py-10">No data found for selection.</div>}
+        </div>
+    </div>
+  );
 }
 
 // --- Settings Page ---
@@ -1152,9 +824,9 @@ function SettingsPage() {
     const [editingCountry, setEditingCountry] = useState<CountrySettings | null>(null);
     const [form, setForm] = useState<Partial<CountrySettings>>({});
 
-    // Conversion helper state for UI
-    const [usdEquivalent, setUsdEquivalent] = useState<string>(''); 
-    const [madEquivalent, setMadEquivalent] = useState<string>(''); 
+    // Manual inputs
+    const [usdInput, setUsdInput] = useState<string>(''); 
+    const [madInput, setMadInput] = useState<string>(''); 
 
     const handleSave = () => {
         const payload = { ...form, id: editingCountry?.id || generateId() } as CountrySettings;
@@ -1164,65 +836,24 @@ function SettingsPage() {
         setShowAdd(false);
         setEditingCountry(null);
         setForm({});
-        setUsdEquivalent('');
-        setMadEquivalent('');
+        setUsdInput('');
+        setMadInput('');
     };
 
     const startEdit = (c: CountrySettings) => {
         setEditingCountry(c);
         setForm(c);
         
-        // Internal: 1 Local = X USD.
-        // UI USD: 1 USD = (1/X) Local.
         if (c.exchange_rate_to_usd > 0) {
-            setUsdEquivalent((1 / c.exchange_rate_to_usd).toFixed(2));
-            
-            // UI MAD: 1 MAD = ? Local
-            // 1 MAD approx 0.1 USD (from MA settings if exists, else hardcode approx)
-            const ma = countries.find(x => x.code === 'MA');
-            const maRate = ma?.exchange_rate_to_usd || 0.1; 
-            // 1 Local = X USD. 1 MAD = maRate USD.
-            // 1 MAD = (maRate / X) Local.
-            setMadEquivalent((maRate / c.exchange_rate_to_usd).toFixed(2));
+            setUsdInput((1 / c.exchange_rate_to_usd).toFixed(2));
+            // Show rough MAD estimate
+            setMadInput((0.1 / c.exchange_rate_to_usd).toFixed(2));
         } else {
-            setUsdEquivalent('');
-            setMadEquivalent('');
+            setUsdInput('');
+            setMadInput('');
         }
         setShowAdd(true);
     };
-
-    const handleUsdEquivChange = (val: string) => {
-        setUsdEquivalent(val);
-        const num = parseFloat(val);
-        if (num > 0) {
-            setForm(prev => ({ ...prev, exchange_rate_to_usd: 1 / num }));
-            
-            // Update MAD equiv visual
-            const ma = countries.find(x => x.code === 'MA');
-            const maRate = ma?.exchange_rate_to_usd || 0.1;
-            // 1 USD = num Local.
-            // 1 MAD = maRate USD = maRate * num Local.
-            setMadEquivalent((maRate * num).toFixed(2));
-        }
-    };
-
-    const handleMadEquivChange = (val: string) => {
-        setMadEquivalent(val);
-        const num = parseFloat(val);
-        if (num > 0) {
-            // 1 MAD = num Local.
-            // 1 MAD = maRate USD.
-            // maRate USD = num Local => 1 USD = (num / maRate) Local.
-            // We store 1 Local = (maRate / num) USD.
-            const ma = countries.find(x => x.code === 'MA');
-            const maRate = ma?.exchange_rate_to_usd || 0.1;
-            const rateLocalToUsd = maRate / num;
-            setForm(prev => ({ ...prev, exchange_rate_to_usd: rateLocalToUsd }));
-            
-            // Update USD equiv visual: 1 USD = 1/rate
-            setUsdEquivalent((1/rateLocalToUsd).toFixed(2));
-        }
-    }
 
     return (
         <div className="max-w-4xl mx-auto space-y-8">
@@ -1242,24 +873,27 @@ function SettingsPage() {
                              <Input label="Code (e.g. MA)" value={form.code} onChange={e => setForm({...form, code: e.target.value})} />
                              <Input label="Currency Code" value={form.currency_code} onChange={e => setForm({...form, currency_code: e.target.value})} />
                              
-                             {/* Exchange Rate Inputs */}
-                             <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                             <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 dark:bg-zinc-800 p-4 rounded-lg">
                                 <Input 
                                     label={`1 USD = ? ${form.currency_code || 'Local'}`} 
                                     type="number" 
-                                    value={usdEquivalent} 
-                                    onChange={e => handleUsdEquivChange(e.target.value)} 
-                                    placeholder="e.g. 680"
+                                    value={usdInput} 
+                                    onChange={e => {
+                                        setUsdInput(e.target.value);
+                                        const val = parseFloat(e.target.value);
+                                        if (val > 0) setForm({...form, exchange_rate_to_usd: 1/val});
+                                    }} 
+                                    placeholder="e.g. 600"
                                 />
                                 <Input 
                                     label={`1 MAD = ? ${form.currency_code || 'Local'}`} 
                                     type="number" 
-                                    value={madEquivalent} 
-                                    onChange={e => handleMadEquivChange(e.target.value)} 
-                                    placeholder="e.g. 68"
+                                    value={madInput} 
+                                    onChange={e => setMadInput(e.target.value)} 
+                                    placeholder="e.g. 60"
                                 />
                                 <p className="text-xs text-zinc-500 md:col-span-2">
-                                    Enter either rate. The system auto-calculates the other based on MA settings.
+                                    Enter conversion rates manually. 
                                 </p>
                              </div>
 
@@ -1268,7 +902,7 @@ function SettingsPage() {
                              
                              <div className="flex items-center gap-2 mt-6">
                                 <input type="checkbox" checked={form.is_primary} onChange={e => setForm({...form, is_primary: e.target.checked})} className="h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent" />
-                                <label className="text-sm">Set as Primary Country (Base for Calculations)</label>
+                                <label className="text-sm">Set as Primary Country</label>
                              </div>
                         </div>
                         <div className="flex justify-end gap-2 mt-4">
@@ -1292,7 +926,7 @@ function SettingsPage() {
                                 <div className="text-right">
                                     <div className="text-xs text-zinc-400">1 USD =</div>
                                     <div className="font-mono text-sm font-bold">
-                                        {(1/c.exchange_rate_to_usd).toFixed(2)} {c.currency_code}
+                                        {c.exchange_rate_to_usd > 0 ? (1/c.exchange_rate_to_usd).toFixed(2) : '-'} {c.currency_code}
                                     </div>
                                 </div>
                                 <Button variant="ghost" size="sm" onClick={() => startEdit(c)}><Edit3 size={14} /></Button>
@@ -1306,87 +940,314 @@ function SettingsPage() {
     )
 }
 
-// --- Profile Page ---
-function ProfilePage() {
-    const { user } = useGlobal();
-    const navigate = useNavigate();
+function AuthPage() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      if (mode === 'signup') {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#09090b] text-white p-4">
+      <Card className="w-full max-w-md border-zinc-800 bg-zinc-900/50 backdrop-blur-xl">
+        <h2 className="text-2xl font-light mb-6 text-center">COD Profit</h2>
+        {error && <div className="p-3 mb-4 text-sm bg-red-500/10 text-red-500 rounded border border-red-500/20">{error}</div>}
+        <form onSubmit={handleAuth} className="space-y-4">
+          <Input label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="name@example.com" />
+          <Input label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" />
+          <Button type="submit" className="w-full" disabled={loading}>
+            {loading ? 'Processing...' : (mode === 'signin' ? 'Sign In' : 'Sign Up')}
+          </Button>
+        </form>
+        <div className="mt-4 text-center text-sm text-zinc-500">
+          {mode === 'signin' ? "Don't have an account? " : "Already have an account? "}
+          <button onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')} className="text-accent hover:underline">
+            {mode === 'signin' ? 'Sign Up' : 'Sign In'}
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function StockPage() {
+  const { products, addProduct, updateProduct, deleteProduct, countries } = useGlobal();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [form, setForm] = useState<Partial<Product>>({});
+
+  const handleSubmit = () => {
+     const payload = { 
+       ...form, 
+       id: editingProduct ? editingProduct.id : generateId(),
+       countries: form.countries || []
+     } as Product;
+     
+     if (editingProduct) updateProduct(payload);
+     else addProduct(payload);
+     
+     setIsModalOpen(false);
+     setEditingProduct(null);
+     setForm({});
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-light">Stock Management</h1>
+        <Button onClick={() => { setEditingProduct(null); setForm({}); setIsModalOpen(true); }}><Plus size={16} className="mr-2" /> Add Product</Button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+         {products.map(p => (
+             <Card key={p.id} className="relative group hover:border-accent/30 transition-all">
+                 <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+                     <button onClick={() => { setEditingProduct(p); setForm(p); setIsModalOpen(true); }} className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"><Edit3 size={14}/></button>
+                     <button onClick={() => { if(window.confirm('Delete?')) deleteProduct(p.id); }} className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 rounded"><Trash2 size={14}/></button>
+                 </div>
+                 <div className="flex items-center gap-4">
+                     <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-800 rounded-lg flex items-center justify-center shrink-0">
+                         <Package size={20} className="text-zinc-400"/>
+                     </div>
+                     <div className="overflow-hidden">
+                         <h3 className="font-medium truncate">{p.name}</h3>
+                         <p className="text-xs text-zinc-500">Prod: {formatCurrency(p.price_production, 'USD')} | Ship: {formatCurrency(p.price_shipping, 'USD')}</p>
+                     </div>
+                 </div>
+                 <div className="mt-4 flex gap-1 flex-wrap">
+                     {p.countries.map(c => <Badge key={c}>{c}</Badge>)}
+                 </div>
+             </Card>
+         ))}
+      </div>
+
+      {isModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+              <Card className="w-full max-w-lg">
+                  <h3 className="text-xl font-light mb-4">{editingProduct ? 'Edit Product' : 'New Product'}</h3>
+                  <div className="space-y-4">
+                      <Input label="Name" value={form.name || ''} onChange={e => setForm({...form, name: e.target.value})} />
+                      <div className="grid grid-cols-2 gap-4">
+                          <Input label="Production Cost (USD)" type="number" value={form.price_production || 0} onChange={e => setForm({...form, price_production: parseFloat(e.target.value)})} />
+                          <Input label="Shipping Cost (USD)" type="number" value={form.price_shipping || 0} onChange={e => setForm({...form, price_shipping: parseFloat(e.target.value)})} />
+                      </div>
+                      <div>
+                          <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider ml-1 block mb-2">Countries</label>
+                          <div className="flex gap-2 flex-wrap">
+                              {countries.map(c => (
+                                  <button key={c.code} onClick={() => {
+                                      const cur = form.countries || [];
+                                      setForm({...form, countries: cur.includes(c.code) ? cur.filter(x => x !== c.code) : [...cur, c.code]});
+                                  }} className={`px-3 py-1 text-xs rounded-full border ${ (form.countries || []).includes(c.code) ? 'bg-zinc-900 text-white dark:bg-white dark:text-black' : 'border-zinc-200 dark:border-zinc-700' }`}>
+                                      {c.name}
+                                  </button>
+                              ))}
+                          </div>
+                      </div>
+                  </div>
+                  <div className="flex justify-end gap-2 mt-6">
+                      <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                      <Button onClick={handleSubmit}>Save</Button>
+                  </div>
+              </Card>
+          </div>
+      )}
+    </div>
+  );
+}
+
+function SalesPage() {
+    const { sales, products, addSales } = useGlobal();
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            const bstr = evt.target?.result;
+            const wb = XLSX.read(bstr, { type: 'binary' });
+            const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            const newSales = data.map((row: any) => ({
+                id: generateId(),
+                date: row.Date || formatDate(new Date()),
+                full_name: row['Full Name'] || 'Unknown',
+                phone: row.Phone || '',
+                product_id: products.find(p => p.name === row.Product)?.id || '',
+                quantity: Number(row.Quantity) || 1,
+                total_price: Number(row['Total Price']) || 0,
+                delivery_price: Number(row['Delivery Price']) || 0,
+                status: OrderStatus.DELIVERED,
+                country: row.Country || 'MA'
+            })).filter((s: any) => s.product_id);
+            addSales(newSales);
+        };
+        reader.readAsBinaryString(file);
+    };
 
     return (
-        <div className="max-w-2xl mx-auto space-y-6">
-            <h1 className="text-2xl font-light">Profile</h1>
-            <Card className="flex flex-col items-center p-8">
-                <div className="w-20 h-20 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center mb-4">
-                    <UserCircle size={40} className="text-zinc-400" />
+        <div className="space-y-6">
+            <div className="flex justify-between items-center">
+                <h1 className="text-2xl font-light">Sales</h1>
+                <div className="flex gap-2">
+                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xlsx" />
+                    <Button variant="secondary" onClick={() => fileInputRef.current?.click()}><Upload size={16} className="mr-2"/> Import Excel</Button>
                 </div>
-                <h2 className="text-xl font-medium">{user?.email}</h2>
-                <p className="text-zinc-500 text-sm mb-6">Administrator</p>
-                <Button 
-                    variant="secondary" 
-                    className="w-full text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
-                    onClick={() => supabase.auth.signOut()}
-                >
-                    <LogOut size={16} className="mr-2" /> Sign Out
-                </Button>
+            </div>
+            <Card className="overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="text-xs uppercase bg-zinc-50 dark:bg-zinc-900/50 text-zinc-500">
+                            <tr>
+                                <th className="px-4 py-3">Date</th>
+                                <th className="px-4 py-3">Customer</th>
+                                <th className="px-4 py-3">Product</th>
+                                <th className="px-4 py-3">Total</th>
+                                <th className="px-4 py-3">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                            {sales.slice().reverse().slice(0, 50).map(s => (
+                                <tr key={s.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
+                                    <td className="px-4 py-3 whitespace-nowrap">{s.date}</td>
+                                    <td className="px-4 py-3">{s.full_name}<div className="text-xs text-zinc-500">{s.phone}</div></td>
+                                    <td className="px-4 py-3">{products.find(p => p.id === s.product_id)?.name}</td>
+                                    <td className="px-4 py-3 font-mono">{s.total_price}</td>
+                                    <td className="px-4 py-3"><Badge>{s.status}</Badge></td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             </Card>
         </div>
     )
 }
 
-// --- Auth Page ---
-function AuthPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLogin, setIsLogin] = useState(true);
-  const [error, setError] = useState('');
+function AdsPage() {
+    return <ExpensePage type="ADS" title="Ads Spend" />;
+}
 
-  const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    try {
-      const { error } = isLogin 
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
-      
-      if (error) throw error;
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+function FixedChargesPage() {
+    return <ExpensePage type="FIXED" title="Fixed Charges" />;
+}
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#09090b] p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-           <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-accent to-purple-400 mx-auto flex items-center justify-center text-white font-bold text-lg shadow-xl shadow-accent/20 mb-4">
-            CP
-          </div>
-          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-white">Welcome back</h1>
-          <p className="text-zinc-500 mt-2">Enter your credentials to access your dashboard.</p>
+function TestChargesPage() {
+    return <ExpensePage type="TEST" title="Test Charges" />;
+}
+
+function ExpensePage({ type, title }: { type: 'ADS' | 'FIXED' | 'TEST', title: string }) {
+    const { expenses, addExpenses, products, deleteExpense } = useGlobal();
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+             const bstr = evt.target?.result;
+             const wb = XLSX.read(bstr, { type: 'binary' });
+             const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+             const newExpenses = data.map((row: any) => ({
+                 id: generateId(),
+                 date: row.Date,
+                 amount: Number(row.Amount),
+                 type,
+                 platform: row.Platform,
+                 name: row.Description || row.Name,
+                 product_id: products.find(p => p.name === row.Product)?.id,
+                 country: row.Country || 'MA',
+                 note: row.Note
+             })).filter((e: any) => type === 'FIXED' ? true : e.product_id); 
+             addExpenses(newExpenses);
+        };
+        reader.readAsBinaryString(file);
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="flex justify-between items-center">
+                <h1 className="text-2xl font-light">{title}</h1>
+                <div className="flex gap-2">
+                    <Button variant="ghost" onClick={() => downloadTemplate(type === 'FIXED' ? 'CHARGES_FIXED' : (type === 'TEST' ? 'CHARGES_TEST' : 'ADS'))}><Download size={16} className="mr-2"/> Template</Button>
+                    <input type="file" ref={fileInputRef} onChange={handleImport} className="hidden" accept=".xlsx" />
+                    <Button variant="secondary" onClick={() => fileInputRef.current?.click()}><Upload size={16} className="mr-2"/> Import</Button>
+                </div>
+            </div>
+            <Card className="overflow-hidden">
+                <table className="w-full text-sm text-left">
+                    <thead className="text-xs uppercase bg-zinc-50 dark:bg-zinc-900/50 text-zinc-500">
+                        <tr>
+                            <th className="px-4 py-3">Date</th>
+                            <th className="px-4 py-3">Description/Platform</th>
+                            {type !== 'FIXED' && <th className="px-4 py-3">Product</th>}
+                            <th className="px-4 py-3">Amount</th>
+                            <th className="px-4 py-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                        {expenses.filter(e => e.type === type).map(e => (
+                            <tr key={e.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
+                                <td className="px-4 py-3 whitespace-nowrap">{e.date}</td>
+                                <td className="px-4 py-3">{e.platform || e.name || '-'}</td>
+                                {type !== 'FIXED' && <td className="px-4 py-3">{products.find(p => p.id === e.product_id)?.name || '-'}</td>}
+                                <td className="px-4 py-3 font-mono">{e.amount}</td>
+                                <td className="px-4 py-3">
+                                    <button onClick={() => deleteExpense(e.id)} className="text-red-500 hover:text-red-700"><Trash2 size={14}/></button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                 {expenses.filter(e => e.type === type).length === 0 && <div className="p-8 text-center text-zinc-500">No records found.</div>}
+            </Card>
         </div>
-        
-        <Card>
-          <form onSubmit={handleAuth} className="space-y-4">
-            <Input label="Email" type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} required />
-            <Input label="Password" type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} required />
-            
-            {error && <div className="p-3 bg-red-500/10 text-red-500 text-xs rounded-md border border-red-500/20">{error}</div>}
-            
-            <Button type="submit" variant="primary" className="w-full h-11 text-base">
-              {isLogin ? 'Sign In' : 'Create Account'}
-            </Button>
-          </form>
-          
-          <div className="mt-6 text-center">
-            <button 
-              type="button"
-              className="text-sm text-zinc-500 hover:text-accent transition-colors"
-              onClick={() => setIsLogin(!isLogin)}
-            >
-              {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-            </button>
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
+    )
+}
+
+function ProfilePage() {
+    const { user } = useGlobal();
+    const navigate = useNavigate();
+    
+    const handleLogout = async () => {
+        await supabase.auth.signOut();
+        navigate('/');
+    };
+
+    return (
+        <div className="max-w-md mx-auto mt-20 space-y-6">
+            <h1 className="text-2xl font-light text-center">User Profile</h1>
+            <Card className="flex flex-col items-center p-8 gap-4">
+                <div className="w-20 h-20 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center text-3xl">
+                    <UserCircle size={40} className="text-zinc-400" />
+                </div>
+                <div className="text-center">
+                    <div className="font-medium text-lg">{user?.email}</div>
+                    <div className="text-sm text-zinc-500">User ID: {user?.id}</div>
+                </div>
+                <Button variant="secondary" className="w-full mt-4" onClick={handleLogout}>
+                    <LogOut size={16} className="mr-2" /> Sign Out
+                </Button>
+            </Card>
+        </div>
+    )
 }

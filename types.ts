@@ -1,10 +1,12 @@
+
 export interface Product {
   id: string;
   name: string;
   price_production: number;
   price_shipping: number;
-  country: string;
+  countries: string[]; // Changed from single country string to array
   note?: string;
+  image?: string; // Base64 string for mini image
 }
 
 export enum OrderStatus {
