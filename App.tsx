@@ -65,8 +65,18 @@ const getDateRange = (filter: string, customStart?: string, customEnd?: string) 
   return { start: '2020-01-01', end: '2030-12-31' }; // All time
 };
 
+const formatCurrency = (amount: number, currency: 'USD' | 'MAD') => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency,
+    currencyDisplay: 'code', // Shows USD 1,234.00
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(amount);
+};
+
 const downloadTemplate = (type: 'ADS' | 'CHARGES_FIXED' | 'CHARGES_TEST') => {
-    let data = [];
+    let data: any[] = [];
     let name = "template";
     if (type === 'ADS') {
         data = [{ Date: "2023-10-25", Platform: "Facebook", Amount: 150.50, Product: "Smart Watch", Country: "MA" }];
@@ -104,11 +114,13 @@ interface GlobalContextType {
   addSales: (s: Sale[]) => void;
   updateSale: (s: Sale) => void;
   deleteSale: (id: string) => void;
+  deleteSalesForProduct: (productId: string) => void;
 
   addExpense: (e: Expense) => void;
   addExpenses: (e: Expense[]) => void;
   updateExpense: (e: Expense) => void;
   deleteExpense: (id: string) => void;
+  deleteExpensesForProduct: (productId: string) => void;
 
   addCountry: (c: CountrySettings) => void;
   updateCountry: (c: CountrySettings) => void;
@@ -132,7 +144,7 @@ const MOCK_COUNTRIES: CountrySettings[] = [
 ];
 
 const MOCK_PRODUCTS: Product[] = [
-  { id: '1', name: 'Smart Watch Ultra', price_production: 15, price_shipping: 5, country: 'MA', note: 'Best seller' },
+  { id: '1', name: 'Smart Watch Ultra', price_production: 15, price_shipping: 5, countries: ['MA'], note: 'Best seller' },
 ];
 
 const MOCK_SALES: Sale[] = [
@@ -179,13 +191,21 @@ export default function App() {
   const addSales = (newSales: Sale[]) => setSales(prev => [...prev, ...newSales]);
   const updateSale = (s: Sale) => setSales(prev => prev.map(x => x.id === s.id ? s : x));
   const deleteSale = (id: string) => setSales(prev => prev.filter(x => x.id !== id));
+  const deleteSalesForProduct = (productId: string) => setSales(prev => prev.filter(s => s.product_id !== productId));
 
   const addExpense = (e: Expense) => setExpenses(prev => [...prev, e]);
   const addExpenses = (newExpenses: Expense[]) => setExpenses(prev => [...prev, ...newExpenses]);
   const updateExpense = (e: Expense) => setExpenses(prev => prev.map(x => x.id === e.id ? e : x));
   const deleteExpense = (id: string) => setExpenses(prev => prev.filter(x => x.id !== id));
+  const deleteExpensesForProduct = (productId: string) => setExpenses(prev => prev.filter(e => e.product_id !== productId));
 
-  const addCountry = (c: CountrySettings) => setCountries(prev => [...prev, c]);
+  const addCountry = (c: CountrySettings) => {
+      if (c.is_primary) {
+          setCountries(prev => [...prev.map(x => ({...x, is_primary: false})), c]);
+      } else {
+          setCountries(prev => [...prev, c]);
+      }
+  };
   const updateCountry = (c: CountrySettings) => {
     setCountries(prev => {
       let updated = prev.map(country => country.id === c.id ? c : country);
@@ -204,8 +224,8 @@ export default function App() {
     products, sales, expenses, countries,
     refreshData, 
     addProduct, updateProduct, deleteProduct,
-    addSale, addSales, updateSale, deleteSale,
-    addExpense, addExpenses, updateExpense, deleteExpense,
+    addSale, addSales, updateSale, deleteSale, deleteSalesForProduct,
+    addExpense, addExpenses, updateExpense, deleteExpense, deleteExpensesForProduct,
     addCountry, updateCountry, deleteCountry,
     user, loading
   };
@@ -344,17 +364,20 @@ function Dashboard() {
   
   // Filters
   const [dateFilter, setDateFilter] = useState('this_month');
+  const [customStart, setCustomStart] = useState(formatDate(new Date()));
+  const [customEnd, setCustomEnd] = useState(formatDate(new Date()));
   const [selectedCountry, setSelectedCountry] = useState('all');
   const [selectedProduct, setSelectedProduct] = useState('all');
-  const { start, end } = getDateRange(dateFilter);
+  const { start, end } = getDateRange(dateFilter, customStart, customEnd);
 
   const getLocalToDisplayRate = (countryCode: string) => {
     const country = countries.find(c => c.code === countryCode);
     if (!country) return 0;
-    const rateLocalToUSD = country.exchange_rate_to_usd || 0; // fallback to 0 safely
+    const rateLocalToUSD = country.exchange_rate_to_usd || 0;
     if (currency === 'USD') return rateLocalToUSD;
     const madCountry = countries.find(c => c.code === 'MA');
-    const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1; // Default fallback to avoid div/0
+    const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1;
+    if (madRateToUSD === 0) return 0; 
     return rateLocalToUSD * (1 / madRateToUSD);
   };
 
@@ -362,6 +385,7 @@ function Dashboard() {
     if (currency === 'USD') return 1;
     const madCountry = countries.find(c => c.code === 'MA');
     const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1; 
+    if (madRateToUSD === 0) return 0;
     return 1 / madRateToUSD;
   };
 
@@ -386,7 +410,6 @@ function Dashboard() {
     totalSales += s.total_price * localRate;
     const product = products.find(p => p.id === s.product_id);
     if (product) {
-       // Stock is stored in USD
        const productCostUsd = (product.price_production + product.price_shipping);
        totalStockCost += (productCostUsd * s.quantity) * usdRate;
     }
@@ -403,7 +426,7 @@ function Dashboard() {
   });
 
   filteredExpenses.forEach(e => {
-    const val = e.amount * usdRate; // Expenses are in USD
+    const val = e.amount * usdRate;
     if (e.type === 'ADS') totalAds += val;
     if (e.type === 'FIXED') totalFixed += val;
     if (e.type === 'TEST') totalTest += val;
@@ -468,8 +491,17 @@ function Dashboard() {
                     <option value="this_month">This Month</option>
                     <option value="last_month">Last Month</option>
                     <option value="all">All Time</option>
+                    <option value="custom">Custom Date</option>
                  </select>
              </div>
+
+             {dateFilter === 'custom' && (
+                <div className="flex gap-1 items-center">
+                    <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1.5 text-sm" />
+                    <span className="text-zinc-400">-</span>
+                    <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1.5 text-sm" />
+                </div>
+             )}
 
              <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md">
                  <Filter size={14} className="text-zinc-400"/>
@@ -498,28 +530,28 @@ function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Total Sales" value={`${currencySymbol} ${totalSales.toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue={`${filteredSales.length} Orders`} icon={ShoppingBag} color="text-indigo-500" />
-        <StatCard title="Total Spend" value={`${currencySymbol} ${(totalStockCost + totalAds + totalServiceFees + totalFixed + totalTest).toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue="All Expenses" icon={Wallet} color="text-rose-500" />
-        <StatCard title="Ads Spend" value={`${currencySymbol} ${totalAds.toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue="Marketing" icon={Megaphone} color="text-blue-500" />
-        <StatCard title="Net Profit" value={`${currencySymbol} ${profit.toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue={`${totalSales > 0 ? ((profit/totalSales)*100).toFixed(1) : 0}% Margin`} icon={BarChart3} color={profit >= 0 ? "text-emerald-500" : "text-red-500"} />
+        <StatCard title="Total Sales" value={formatCurrency(totalSales, currency)} subValue={`${filteredSales.length} Orders`} icon={ShoppingBag} color="text-indigo-500" />
+        <StatCard title="Total Spend" value={formatCurrency(totalStockCost + totalAds + totalServiceFees + totalFixed + totalTest, currency)} subValue="All Expenses" icon={Wallet} color="text-rose-500" />
+        <StatCard title="Ads Spend" value={formatCurrency(totalAds, currency)} subValue="Marketing" icon={Megaphone} color="text-blue-500" />
+        <StatCard title="Net Profit" value={formatCurrency(profit, currency)} subValue={`${totalSales > 0 ? ((profit/totalSales)*100).toFixed(1) : 0}% Margin`} icon={BarChart3} color={profit >= 0 ? "text-emerald-500" : "text-red-500"} />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
          <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
              <div className="text-xs text-zinc-500 uppercase font-medium">Stock Cost</div>
-             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{currencySymbol}{totalStockCost.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalStockCost, currency)}</div>
          </div>
          <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
              <div className="text-xs text-zinc-500 uppercase font-medium">Service Fees</div>
-             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{currencySymbol}{totalServiceFees.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalServiceFees, currency)}</div>
          </div>
          <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
              <div className="text-xs text-zinc-500 uppercase font-medium">Fixed Charges</div>
-             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{currencySymbol}{totalFixed.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalFixed, currency)}</div>
          </div>
          <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
              <div className="text-xs text-zinc-500 uppercase font-medium">Test Charges</div>
-             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{currencySymbol}{totalTest.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalTest, currency)}</div>
          </div>
       </div>
 
@@ -554,7 +586,6 @@ function Dashboard() {
 }
 
 // --- Sales Page ---
-// (No changes requested, keeping existing logic, but ensuring imports work)
 function SalesPage() {
   const { sales, addSale, addSales, updateSale, deleteSale, products, countries } = useGlobal();
   const [mode, setMode] = useState<'list' | 'import' | 'manual'>('list');
@@ -601,6 +632,8 @@ function SalesPage() {
     const newSales: Sale[] = [];
     let count = 0;
     let skipped = 0;
+    let duplicates = 0;
+
     importData.forEach((row: any) => {
        const getVal = (field: string) => {
           const colLetter = mapping[field];
@@ -614,47 +647,68 @@ function SalesPage() {
           skipped++;
           return;
        }
-       const sale: Partial<Sale> = {
-          id: generateId(),
-          date: formatDate(new Date()),
-          status: OrderStatus.PROCESSED,
-          quantity: 1,
-          country: selectedImportCountry
-       };
+       
+       let dateStr = formatDate(new Date());
        if (typeof dateVal === 'number') {
            const dateObj = new Date(Math.round((dateVal - 25569)*86400*1000));
-           sale.date = formatDate(dateObj);
+           dateStr = formatDate(dateObj);
        } else {
            const d = new Date(String(dateVal));
            if (!isNaN(d.getTime())) {
-               sale.date = formatDate(d);
+               dateStr = formatDate(d);
            }
        }
-       sale.full_name = String(getVal('Full Name') || 'Unknown');
-       sale.phone = String(getVal('Phone') || '');
-       sale.quantity = Number(getVal('Quantity')) || 1;
-       sale.total_price = Number(totalVal) || 0;
+
+       const full_name = String(getVal('Full Name') || 'Unknown');
+       const phone = String(getVal('Phone') || '');
+       const quantity = Number(getVal('Quantity')) || 1;
+       const total_price = Number(totalVal) || 0;
+       
        const targetName = String(prodName || '').trim().toLowerCase();
        const prod = products.find(p => p.name.trim().toLowerCase() === targetName);
-       if (prod) {
-           sale.product_id = prod.id;
-       } else {
+       if (!prod) {
            skipped++;
            return; 
        }
+
+       // Duplicate Check
+       const isDuplicate = sales.some(s => s.date === dateStr && s.total_price === total_price && s.phone === phone && s.product_id === prod.id);
+       if (isDuplicate) {
+           duplicates++;
+           return;
+       }
+
        const statusRaw = getVal('Status');
-       sale.status = (statusRaw as OrderStatus) || OrderStatus.PROCESSED;
-       sale.delivery_price = calculateFees(sale.country!, sale.total_price!);
-       newSales.push(sale as Sale);
+       const status = (statusRaw as OrderStatus) || OrderStatus.PROCESSED;
+       const delivery_price = calculateFees(selectedImportCountry, total_price);
+
+       newSales.push({
+          id: generateId(),
+          date: dateStr,
+          full_name,
+          phone,
+          product_id: prod.id,
+          quantity,
+          total_price,
+          delivery_price,
+          status,
+          country: selectedImportCountry
+       });
        count++;
     });
+
     if (newSales.length > 0) {
         addSales(newSales);
-        alert(`Successfully imported ${count} orders. Skipped ${skipped} rows.`);
+        let msg = `Successfully imported ${count} orders.`;
+        if (duplicates > 0) msg += ` ${duplicates} duplicates skipped.`;
+        if (skipped > 0) msg += ` ${skipped} rows skipped (invalid/missing product).`;
+        alert(msg);
         setMode('list');
         setImportData([]);
     } else {
-        alert("No valid sales found to import. Check mapping or file content.");
+        let msg = "No valid new sales found.";
+        if (duplicates > 0) msg += ` ${duplicates} duplicates detected and skipped.`;
+        alert(msg);
     }
   };
 
@@ -664,6 +718,15 @@ function SalesPage() {
   };
 
   const handleSave = () => {
+     // Duplicate check for manual entry
+     if (!editingId) {
+         const isDuplicate = sales.some(s => s.date === form.date && s.total_price === Number(form.total_price) && s.phone === form.phone && s.product_id === form.product_id);
+         if (isDuplicate) {
+             alert("Duplicate sale detected (Same Date, Price, Phone, Product). Entry skipped.");
+             return;
+         }
+     }
+
      const delivery_price = calculateFees(form.country!, Number(form.total_price));
      const payload = {
        ...form,
@@ -807,14 +870,14 @@ function SalesPage() {
 
 // --- Stock Page ---
 function StockPage() {
-  const { products, addProduct, updateProduct, deleteProduct, countries, sales, expenses } = useGlobal();
+  const { products, addProduct, updateProduct, deleteProduct, countries, sales, expenses, deleteSalesForProduct, deleteExpensesForProduct } = useGlobal();
   const [isEditing, setIsEditing] = useState(false);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [form, setForm] = useState<Partial<Product>>({
     name: '',
     price_production: 0,
     price_shipping: 0,
-    country: countries[0]?.code || 'MA',
+    countries: [],
     note: '',
     image: ''
   });
@@ -831,6 +894,15 @@ function StockPage() {
       }
   };
 
+  const toggleCountry = (code: string) => {
+      const current = form.countries || [];
+      if (current.includes(code)) {
+          setForm({...form, countries: current.filter(c => c !== code)});
+      } else {
+          setForm({...form, countries: [...current, code]});
+      }
+  };
+
   const handleSubmit = () => {
     if (!form.name) return;
     const payload = {
@@ -838,7 +910,7 @@ function StockPage() {
         name: form.name,
         price_production: Number(form.price_production),
         price_shipping: Number(form.price_shipping),
-        country: form.country || 'MA',
+        countries: form.countries || [],
         note: form.note || '',
         image: form.image || ''
     } as Product;
@@ -846,7 +918,7 @@ function StockPage() {
     else addProduct(payload);
     setIsEditing(false);
     setCurrentId(null);
-    setForm({ name: '', price_production: 0, price_shipping: 0, country: countries[0]?.code || 'MA', note: '', image: '' });
+    setForm({ name: '', price_production: 0, price_shipping: 0, countries: [], note: '', image: '' });
   };
 
   const handleEdit = (p: Product) => {
@@ -856,13 +928,18 @@ function StockPage() {
   };
 
   const handleDelete = (id: string) => {
-    const hasSales = sales.some(s => s.product_id === id);
-    const hasExpenses = expenses.some(e => e.product_id === id);
-    if (hasSales || hasExpenses) {
-        alert("Cannot delete product because it has associated sales or expenses. Please delete associated records first.");
-        return;
+    const pSales = sales.filter(s => s.product_id === id);
+    const pExpenses = expenses.filter(e => e.product_id === id);
+    
+    if (pSales.length > 0 || pExpenses.length > 0) {
+        if (!confirm(`This product has ${pSales.length} sales and ${pExpenses.length} expenses associated with it. Deleting it will PERMANENTLY delete these records. Continue?`)) {
+            return;
+        }
+        deleteSalesForProduct(id);
+        deleteExpensesForProduct(id);
     }
-    if(confirm('Delete this product?')) deleteProduct(id);
+    
+    deleteProduct(id);
   };
 
   return (
@@ -880,7 +957,26 @@ function StockPage() {
                 </div>
                 <Input label="Production Price (USD)" type="number" value={form.price_production} onChange={e => setForm({...form, price_production: parseFloat(e.target.value)})} />
                 <Input label="Shipping Price (USD)" type="number" value={form.price_shipping} onChange={e => setForm({...form, price_shipping: parseFloat(e.target.value)})} />
-                <Select label="Country" value={form.country} onChange={e => setForm({...form, country: e.target.value})} options={countries.map(c => ({value: c.code, label: c.name}))} />
+                
+                <div className="md:col-span-2">
+                    <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider ml-1 mb-2 block">Available In Countries</label>
+                    <div className="flex flex-wrap gap-2">
+                        {countries.map(c => (
+                            <div 
+                                key={c.code} 
+                                onClick={() => toggleCountry(c.code)}
+                                className={`cursor-pointer px-3 py-1.5 rounded-full border text-xs font-medium transition-all select-none ${
+                                    form.countries?.includes(c.code) 
+                                    ? 'bg-accent text-white border-accent' 
+                                    : 'bg-zinc-50 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400'
+                                }`}
+                            >
+                                {c.name}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
                 <div className="md:col-span-2">
                     <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider ml-1 mb-1 block">Product Image</label>
                     <div className="flex items-center gap-4">
@@ -912,7 +1008,7 @@ function StockPage() {
                 <tr>
                     <th className="px-6 py-4 font-semibold w-20">Image</th>
                     <th className="px-6 py-4 font-semibold">Product Name</th>
-                    <th className="px-6 py-4 font-semibold">Country</th>
+                    <th className="px-6 py-4 font-semibold">Markets</th>
                     <th className="px-6 py-4 font-semibold">Production</th>
                     <th className="px-6 py-4 font-semibold">Shipping</th>
                     <th className="px-6 py-4 font-semibold">Total Cost</th>
@@ -928,7 +1024,11 @@ function StockPage() {
                             </div>
                         </td>
                         <td className="px-6 py-3 font-medium text-zinc-900 dark:text-zinc-100">{p.name}</td>
-                        <td className="px-6 py-3"><Badge>{p.country}</Badge></td>
+                        <td className="px-6 py-3">
+                            <div className="flex gap-1 flex-wrap max-w-[150px]">
+                                {p.countries?.map(c => <Badge key={c}>{c}</Badge>)}
+                            </div>
+                        </td>
                         <td className="px-6 py-3 text-zinc-500">${p.price_production}</td>
                         <td className="px-6 py-3 text-zinc-500">${p.price_shipping}</td>
                         <td className="px-6 py-3 font-mono font-bold text-accent">${(p.price_production + p.price_shipping).toFixed(2)}</td>
@@ -953,7 +1053,17 @@ function AdsPage() {
     const [mode, setMode] = useState<'list' | 'import' | 'manual'>('list');
     const [currentId, setCurrentId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const adsExpenses = expenses.filter(e => e.type === 'ADS');
+    
+    // Filters
+    const [dateFilter, setDateFilter] = useState('this_month');
+    const [customStart, setCustomStart] = useState(formatDate(new Date()));
+    const [customEnd, setCustomEnd] = useState(formatDate(new Date()));
+    const { start, end } = getDateRange(dateFilter, customStart, customEnd);
+
+    const adsExpenses = expenses.filter(e => {
+        return e.type === 'ADS' && e.date >= start && e.date <= end;
+    });
+
     const [form, setForm] = useState<Partial<Expense>>({
         date: formatDate(new Date()),
         amount: 0,
@@ -964,6 +1074,14 @@ function AdsPage() {
     });
 
     const handleSubmit = () => {
+        if (!currentId) {
+            const isDuplicate = expenses.some(e => e.type === 'ADS' && e.date === form.date && e.amount === Number(form.amount) && e.platform === form.platform);
+            if (isDuplicate) {
+                alert("Duplicate ad spend entry detected (Same Date, Amount, Platform). Entry skipped.");
+                return;
+            }
+        }
+
         const payload = {
             ...form,
             id: currentId || generateId(),
@@ -994,6 +1112,8 @@ function AdsPage() {
             const data: any[] = XLSX.utils.sheet_to_json(ws);
             const newExpenses: Expense[] = [];
             let count = 0;
+            let duplicates = 0;
+            
             data.forEach(row => {
                  const dateRaw = row['Date'] || row['date'];
                  const amount = row['Amount'] || row['amount'] || row['Spend'];
@@ -1004,6 +1124,15 @@ function AdsPage() {
                  } else {
                      dateStr = String(dateRaw).substring(0, 10);
                  }
+                 const platform = row['Platform'] || 'Facebook';
+                 
+                 // Duplicate Check
+                 const isDuplicate = expenses.some(e => e.type === 'ADS' && e.date === dateStr && e.amount === Number(amount) && e.platform === platform);
+                 if (isDuplicate) {
+                     duplicates++;
+                     return;
+                 }
+
                  const prodName = row['Product'] || row['product'];
                  const targetName = String(prodName || '').trim().toLowerCase();
                  const prod = products.find(p => p.name.trim().toLowerCase() === targetName);
@@ -1012,7 +1141,7 @@ function AdsPage() {
                      date: dateStr,
                      amount: Number(amount),
                      type: 'ADS',
-                     platform: row['Platform'] || 'Facebook',
+                     platform: platform,
                      country: row['Country'] || countries[0].code,
                      product_id: prod ? prod.id : '' 
                  };
@@ -1021,10 +1150,14 @@ function AdsPage() {
             });
             if (count > 0) {
                 addExpenses(newExpenses);
-                alert(`Imported ${count} ad spend entries.`);
+                let msg = `Imported ${count} ad spend entries.`;
+                if (duplicates > 0) msg += ` ${duplicates} duplicates skipped.`;
+                alert(msg);
                 setMode('list');
             } else {
-                alert("No valid rows found. Ensure columns: Date, Amount, Platform");
+                let msg = "No valid entries.";
+                if (duplicates > 0) msg += ` ${duplicates} duplicates detected.`;
+                alert(msg);
             }
         };
         reader.readAsBinaryString(file);
@@ -1032,9 +1165,27 @@ function AdsPage() {
 
     return (
         <div className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <h1 className="text-2xl font-light">Ads Spend</h1>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 items-center">
+                    {/* Filters */}
+                    <div className="flex items-center gap-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-1.5">
+                        <Calendar size={14} className="text-zinc-400 ml-1"/>
+                        <select value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="bg-transparent text-sm focus:outline-none">
+                            <option value="this_month">This Month</option>
+                            <option value="last_month">Last Month</option>
+                            <option value="all">All Time</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                        {dateFilter === 'custom' && (
+                            <div className="flex items-center gap-1 border-l border-zinc-200 dark:border-zinc-700 pl-2">
+                                <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="bg-transparent text-xs w-24"/>
+                                <span className="text-zinc-400">-</span>
+                                <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="bg-transparent text-xs w-24"/>
+                            </div>
+                        )}
+                    </div>
+                    
                     <Button variant="secondary" onClick={() => setMode('import')}><FileSpreadsheet size={16} className="mr-2"/> Import Excel</Button>
                     <Button onClick={() => { setCurrentId(null); setMode('manual'); }} variant="accent"><Plus size={16} className="mr-2"/> Record Ad Spend</Button>
                 </div>
@@ -1106,7 +1257,7 @@ function AdsPage() {
                                 </tr>
                             ))}
                             {adsExpenses.length === 0 && (
-                                <tr><td colSpan={6} className="px-6 py-8 text-center text-zinc-500">No ads spend recorded yet.</td></tr>
+                                <tr><td colSpan={6} className="px-6 py-8 text-center text-zinc-500">No records found for this period.</td></tr>
                             )}
                         </tbody>
                     </table>
@@ -1130,7 +1281,14 @@ const ChargesPageComponent = ({
     const [mode, setMode] = useState<'list' | 'import' | 'manual'>('list');
     const [currentId, setCurrentId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const charges = expenses.filter(e => e.type === type);
+    
+    // Filters
+    const [dateFilter, setDateFilter] = useState('this_month');
+    const [customStart, setCustomStart] = useState(formatDate(new Date()));
+    const [customEnd, setCustomEnd] = useState(formatDate(new Date()));
+    const { start, end } = getDateRange(dateFilter, customStart, customEnd);
+
+    const charges = expenses.filter(e => e.type === type && e.date >= start && e.date <= end);
 
     const [form, setForm] = useState<Partial<Expense>>({
         date: formatDate(new Date()),
@@ -1143,6 +1301,14 @@ const ChargesPageComponent = ({
     });
 
     const handleSubmit = () => {
+        if (!currentId) {
+            const isDuplicate = expenses.some(e => e.type === type && e.date === form.date && e.amount === Number(form.amount) && (e.name === form.name || e.platform === form.platform));
+            if (isDuplicate) {
+                alert("Duplicate charge detected. Entry skipped.");
+                return;
+            }
+        }
+
         const payload = {
             ...form,
             id: currentId || generateId(),
@@ -1173,6 +1339,7 @@ const ChargesPageComponent = ({
              const data: any[] = XLSX.utils.sheet_to_json(ws);
              const newExpenses: Expense[] = [];
              let count = 0;
+             let duplicates = 0;
              data.forEach(row => {
                  const dateRaw = row['Date'] || row['date'];
                  const amount = row['Amount'] || row['amount'];
@@ -1183,6 +1350,14 @@ const ChargesPageComponent = ({
                  } else {
                      dateStr = String(dateRaw).substring(0, 10);
                  }
+                 
+                 const nameOrPlat = type === 'FIXED' ? (row['Description'] || row['Name'] || '') : (row['Platform'] || '');
+                 const isDuplicate = expenses.some(e => e.type === type && e.date === dateStr && e.amount === Number(amount) && (e.name === nameOrPlat || e.platform === nameOrPlat));
+                 if (isDuplicate) {
+                     duplicates++;
+                     return;
+                 }
+
                  const prodName = row['Product'] || row['product'];
                  const targetName = String(prodName || '').trim().toLowerCase();
                  const prod = products.find(p => p.name.trim().toLowerCase() === targetName);
@@ -1191,8 +1366,8 @@ const ChargesPageComponent = ({
                      date: dateStr,
                      amount: Number(amount),
                      type: type,
-                     name: row['Description'] || row['Name'] || '',
-                     platform: row['Platform'] || '',
+                     name: type === 'FIXED' ? nameOrPlat : '',
+                     platform: type === 'TEST' ? nameOrPlat : '',
                      country: row['Country'] || countries[0].code,
                      product_id: prod ? prod.id : '',
                      note: row['Note'] || ''
@@ -1201,8 +1376,14 @@ const ChargesPageComponent = ({
              });
              if (count > 0) {
                  addExpenses(newExpenses);
-                 alert(`Imported ${count} charges.`);
+                 let msg = `Imported ${count} charges.`;
+                 if (duplicates > 0) msg += ` ${duplicates} duplicates skipped.`;
+                 alert(msg);
                  setMode('list');
+             } else {
+                 let msg = "No valid entries.";
+                 if (duplicates > 0) msg += ` ${duplicates} duplicates detected.`;
+                 alert(msg);
              }
         };
         reader.readAsBinaryString(file);
@@ -1210,9 +1391,27 @@ const ChargesPageComponent = ({
 
     return (
         <div className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <h1 className="text-2xl font-light">{title}</h1>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 items-center">
+                    {/* Filters */}
+                    <div className="flex items-center gap-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-1.5">
+                        <Calendar size={14} className="text-zinc-400 ml-1"/>
+                        <select value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="bg-transparent text-sm focus:outline-none">
+                            <option value="this_month">This Month</option>
+                            <option value="last_month">Last Month</option>
+                            <option value="all">All Time</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                        {dateFilter === 'custom' && (
+                            <div className="flex items-center gap-1 border-l border-zinc-200 dark:border-zinc-700 pl-2">
+                                <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="bg-transparent text-xs w-24"/>
+                                <span className="text-zinc-400">-</span>
+                                <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="bg-transparent text-xs w-24"/>
+                            </div>
+                        )}
+                    </div>
+
                     <Button variant="secondary" onClick={() => setMode('import')}><FileSpreadsheet size={16} className="mr-2"/> Import Excel</Button>
                     <Button onClick={() => { setCurrentId(null); setMode('manual'); }} variant="accent"><Plus size={16} className="mr-2"/> Add Charge</Button>
                 </div>
@@ -1308,59 +1507,9 @@ const ChargesPageComponent = ({
 const FixedChargesPage = () => <ChargesPageComponent type="FIXED" title="Fixed Charges" templateType="CHARGES_FIXED" />;
 const TestChargesPage = () => <ChargesPageComponent type="TEST" title="Test Charges" templateType="CHARGES_TEST" />;
 
-// --- Auth Page ---
-function AuthPage() {
-  const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-      }
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-[#09090b] flex items-center justify-center p-4">
-      <Card className="w-full max-w-md">
-        <h2 className="text-2xl font-bold mb-6 text-center">{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
-        {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4">{error}</div>}
-        <form onSubmit={handleAuth} className="space-y-4">
-          <Input label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
-          <Input label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Sign Up')}
-          </Button>
-        </form>
-        <div className="mt-4 text-center text-sm text-zinc-500">
-          {isLogin ? "Don't have an account? " : "Already have an account? "}
-          <button onClick={() => setIsLogin(!isLogin)} className="text-accent font-medium hover:underline">
-            {isLogin ? 'Sign Up' : 'Sign In'}
-          </button>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
 // --- Analyze Products Page (Restored) ---
 function AnalyzeProductsPage() {
-    const { products, sales, expenses, countries, currency } = useGlobal();
+    const { products, sales, expenses, currency, countries } = useGlobal();
     
     // Filters State
     const [dateRange, setDateRange] = useState<'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'custom'>('this_month');
@@ -1393,55 +1542,56 @@ function AnalyzeProductsPage() {
     const usdRate = getUsdToDisplayRate();
     const currencySym = displayCurrency === 'USD' ? '$' : 'DH';
 
-    // Filtering
-    const filteredSales = sales.filter(s => {
-        if (filterCountry !== 'all' && s.country !== filterCountry) return false;
-        if (filterProduct !== 'all' && s.product_id !== filterProduct) return false;
-        return s.date >= start && s.date <= end;
-    });
+    // Chart Data
+    const chartData = useMemo(() => {
+        const dayMap = new Map<string, { date: string, sales: number, profit: number, cost: number, ads: number }>();
+        const initDay = (d: string) => {
+            if (!dayMap.has(d)) dayMap.set(d, { date: d, sales: 0, profit: 0, cost: 0, ads: 0 });
+        };
 
-    const filteredExpenses = expenses.filter(e => {
-        if (filterCountry !== 'all' && e.country !== filterCountry) return false;
-        if (filterProduct !== 'all' && e.product_id !== filterProduct) return false;
-        return e.date >= start && e.date <= end;
-    });
+        const relevantSales = sales.filter(s => {
+            if (filterProduct !== 'all' && s.product_id !== filterProduct) return false;
+            if (filterCountry !== 'all' && s.country !== filterCountry) return false;
+            return s.date >= start && s.date <= end;
+        });
 
-    // Metrics
-    let totalSales = 0;
-    let totalStock = 0; 
-    let totalServiceFees = 0; 
-    let totalAds = 0;
-    let totalCharges = 0;
+        const relevantExpenses = expenses.filter(e => {
+            if (filterProduct !== 'all' && e.product_id !== filterProduct) return false;
+            if (filterCountry !== 'all' && e.country !== filterCountry) return false;
+            return e.date >= start && e.date <= end;
+        });
 
-    filteredSales.forEach(s => {
-        const rate = getLocalToDisplayRate(s.country);
-        totalSales += s.total_price * rate;
-        totalServiceFees += s.delivery_price * rate;
+        relevantSales.forEach(s => {
+            initDay(s.date);
+            const entry = dayMap.get(s.date)!;
+            const rate = getLocalToDisplayRate(s.country);
+            const revenue = s.total_price * rate;
+            const fees = s.delivery_price * rate;
+            const prod = products.find(p => p.id === s.product_id);
+            const stock = prod ? (prod.price_production + prod.price_shipping) * s.quantity * usdRate : 0;
+            entry.sales += revenue;
+            entry.cost += stock + fees;
+        });
 
-        const prod = products.find(p => p.id === s.product_id);
-        if (prod) {
-            totalStock += ((prod.price_production + prod.price_shipping) * s.quantity) * usdRate;
+        relevantExpenses.forEach(e => {
+            initDay(e.date);
+            const entry = dayMap.get(e.date)!;
+            const amount = e.amount * usdRate;
+            if (e.type === 'ADS') entry.ads += amount;
+            else entry.cost += amount;
+        });
+
+        for (const val of dayMap.values()) {
+            val.profit = val.sales - val.cost - val.ads;
         }
-    });
 
-    filteredExpenses.forEach(e => {
-        const val = e.amount * usdRate;
-        if (e.type === 'ADS') totalAds += val;
-        if (e.type === 'FIXED' || e.type === 'TEST') totalCharges += val;
-    });
-
-    const totalProfit = totalSales - totalStock - totalServiceFees - totalAds - totalCharges;
+        return Array.from(dayMap.values()).sort((a,b) => a.date.localeCompare(b.date));
+    }, [sales, expenses, products, start, end, filterProduct, filterCountry, displayCurrency, countries]);
 
     return (
         <div className="space-y-6">
-            {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                 <div>
-                    <h1 className="text-2xl font-light">Product Analysis</h1>
-                    <p className="text-sm text-zinc-500">Deep dive into product performance and profitability.</p>
-                 </div>
-                 
-                 {/* Filters */}
+                 <div><h1 className="text-2xl font-light">Product Analysis</h1></div>
                  <div className="flex flex-wrap gap-2 items-center bg-white dark:bg-zinc-800 p-2 rounded-lg border border-zinc-200 dark:border-zinc-700 shadow-sm w-full md:w-auto">
                       <div className="flex items-center gap-2 px-2">
                          <Filter size={14} className="text-zinc-400"/>
@@ -1453,7 +1603,6 @@ function AnalyzeProductsPage() {
                             <option value="custom">Custom Date</option>
                          </select>
                       </div>
-                      
                       {dateRange === 'custom' && (
                           <div className="flex gap-1">
                              <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 text-xs" />
@@ -1461,21 +1610,16 @@ function AnalyzeProductsPage() {
                              <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 text-xs" />
                           </div>
                       )}
-
                       <div className="w-[1px] h-4 bg-zinc-300 dark:bg-zinc-600 mx-1"></div>
-
                       <select value={filterCountry} onChange={e => setFilterCountry(e.target.value)} className="bg-transparent text-sm focus:outline-none max-w-[100px]">
                           <option value="all">All Countries</option>
                           {countries.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
                       </select>
-
                       <select value={filterProduct} onChange={e => setFilterProduct(e.target.value)} className="bg-transparent text-sm focus:outline-none max-w-[100px]">
                           <option value="all">All Products</option>
                           {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
-                      
                       <div className="w-[1px] h-4 bg-zinc-300 dark:bg-zinc-600 mx-1"></div>
-                      
                       <select value={displayCurrency} onChange={e => setDisplayCurrency(e.target.value as any)} className="bg-transparent text-sm font-bold text-accent focus:outline-none">
                           <option value="USD">USD</option>
                           <option value="MAD">MAD</option>
@@ -1483,122 +1627,37 @@ function AnalyzeProductsPage() {
                  </div>
             </div>
 
-            {/* KPI Cards Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                <Card className="p-4 flex flex-col justify-between h-28 border-l-4 border-l-indigo-500">
-                    <span className="text-xs text-zinc-500 uppercase font-medium">Sales</span>
-                    <div>
-                        <div className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{currencySym}{totalSales.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
-                        <div className="text-[10px] text-zinc-400">{filteredSales.length} orders</div>
-                    </div>
-                </Card>
-                <Card className="p-4 flex flex-col justify-between h-28 border-l-4 border-l-rose-500">
-                    <span className="text-xs text-zinc-500 uppercase font-medium">Stock Cost</span>
-                    <div>
-                        <div className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{currencySym}{totalStock.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
-                        <div className="text-[10px] text-zinc-400">COGS + Ship</div>
-                    </div>
-                </Card>
-                <Card className="p-4 flex flex-col justify-between h-28 border-l-4 border-l-orange-500">
-                    <span className="text-xs text-zinc-500 uppercase font-medium">Service Fees</span>
-                    <div>
-                        <div className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{currencySym}{totalServiceFees.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
-                        <div className="text-[10px] text-zinc-400">COD / Delivery</div>
-                    </div>
-                </Card>
-                <Card className="p-4 flex flex-col justify-between h-28 border-l-4 border-l-blue-500">
-                    <span className="text-xs text-zinc-500 uppercase font-medium">Ads Spend</span>
-                    <div>
-                        <div className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{currencySym}{totalAds.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
-                    </div>
-                </Card>
-                <Card className="p-4 flex flex-col justify-between h-28 border-l-4 border-l-yellow-500">
-                    <span className="text-xs text-zinc-500 uppercase font-medium">Charges</span>
-                    <div>
-                        <div className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{currencySym}{totalCharges.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
-                        <div className="text-[10px] text-zinc-400">Fixed + Test</div>
-                    </div>
-                </Card>
-                <Card className={`p-4 flex flex-col justify-between h-28 border-l-4 ${totalProfit >= 0 ? 'border-l-emerald-500' : 'border-l-red-500'}`}>
-                    <span className="text-xs text-zinc-500 uppercase font-medium">Net Profit</span>
-                    <div>
-                        <div className={`text-lg font-bold ${totalProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{currencySym}{totalProfit.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
-                        <div className="text-[10px] text-zinc-400">Margin: {totalSales > 0 ? ((totalProfit/totalSales)*100).toFixed(1) : 0}%</div>
-                    </div>
-                </Card>
-            </div>
-
-            {/* Detailed Table */}
-            <Card className="p-0 overflow-hidden">
-                <table className="w-full text-left text-xs">
-                    <thead className="bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-700 font-semibold uppercase tracking-wider">
-                        <tr>
-                            <th className="px-4 py-3">Product / Entity</th>
-                            <th className="px-4 py-3 text-right">Sales</th>
-                            <th className="px-4 py-3 text-right">Stock Cost</th>
-                            <th className="px-4 py-3 text-right">Fees</th>
-                            <th className="px-4 py-3 text-right">Ads</th>
-                            <th className="px-4 py-3 text-right">Charges</th>
-                            <th className="px-4 py-3 text-right">Profit</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800 text-zinc-700 dark:text-zinc-300">
-                        {/* Overall Row */}
-                        <tr className="bg-zinc-50/50 dark:bg-zinc-800/30 font-bold">
-                            <td className="px-4 py-3">ALL (Summary)</td>
-                            <td className="px-4 py-3 text-right">{currencySym}{totalSales.toFixed(0)}</td>
-                            <td className="px-4 py-3 text-right">{currencySym}{totalStock.toFixed(0)}</td>
-                            <td className="px-4 py-3 text-right">{currencySym}{totalServiceFees.toFixed(0)}</td>
-                            <td className="px-4 py-3 text-right">{currencySym}{totalAds.toFixed(0)}</td>
-                            <td className="px-4 py-3 text-right">{currencySym}{totalCharges.toFixed(0)}</td>
-                            <td className={`px-4 py-3 text-right ${totalProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                {currencySym}{totalProfit.toFixed(0)}
-                            </td>
-                        </tr>
-
-                        {filterProduct === 'all' && products.map(prod => {
-                             const pSales = filteredSales.filter(s => s.product_id === prod.id);
-                             const pExpenses = filteredExpenses.filter(e => e.product_id === prod.id);
-                             if (pSales.length === 0 && pExpenses.length === 0) return null;
-
-                             let pTotalSales = 0;
-                             let pTotalStock = 0;
-                             let pTotalFees = 0;
-                             
-                             pSales.forEach(s => {
-                                 const rate = getLocalToDisplayRate(s.country);
-                                 pTotalSales += s.total_price * rate;
-                                 pTotalFees += s.delivery_price * rate;
-                                 pTotalStock += ((prod.price_production + prod.price_shipping) * s.quantity) * usdRate;
-                             });
-                             
-                             let pTotalAds = 0;
-                             pExpenses.forEach(e => { if (e.type === 'ADS') pTotalAds += e.amount * usdRate; });
-
-                             let pTotalCharges = 0; 
-                             pExpenses.forEach(e => { if (e.type !== 'ADS') pTotalCharges += e.amount * usdRate; });
-
-                             const pProfit = pTotalSales - pTotalStock - pTotalFees - pTotalAds - pTotalCharges;
-
-                             return (
-                                <tr key={prod.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
-                                    <td className="px-4 py-3 font-medium flex items-center gap-2">
-                                        {prod.image && <img src={prod.image} className="w-6 h-6 rounded object-cover" />}
-                                        {prod.name}
-                                    </td>
-                                    <td className="px-4 py-3 text-right">{currencySym}{pTotalSales.toFixed(0)}</td>
-                                    <td className="px-4 py-3 text-right">{currencySym}{pTotalStock.toFixed(0)}</td>
-                                    <td className="px-4 py-3 text-right">{currencySym}{pTotalFees.toFixed(0)}</td>
-                                    <td className="px-4 py-3 text-right">{currencySym}{pTotalAds.toFixed(0)}</td>
-                                    <td className="px-4 py-3 text-right">{currencySym}{pTotalCharges.toFixed(0)}</td>
-                                    <td className={`px-4 py-3 text-right ${pProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                        {currencySym}{pProfit.toFixed(0)}
-                                    </td>
-                                </tr>
-                             );
-                        })}
-                    </tbody>
-                </table>
+            <Card className="h-[400px] p-0 overflow-hidden relative">
+                 <div className="absolute top-6 left-6 z-10">
+                    <h3 className="font-medium text-lg">Performance Trend</h3>
+                    <p className="text-xs text-zinc-500">{filterProduct === 'all' ? 'All Products' : products.find(p => p.id === filterProduct)?.name}</p>
+                 </div>
+                 <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={chartData} margin={{ top: 80, right: 30, left: 10, bottom: 10 }}>
+                      <defs>
+                         <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.1}/>
+                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                         </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#333" opacity={0.05} />
+                      <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#a1a1aa', fontSize: 11}} dy={10} 
+                             tickFormatter={(str) => {
+                                 const d = new Date(str);
+                                 return `${d.getDate()}/${d.getMonth()+1}`;
+                             }}
+                      />
+                      <Tooltip 
+                        contentStyle={{backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '8px', color: '#fff'}}
+                        itemStyle={{fontSize: '12px'}}
+                        labelStyle={{color: '#a1a1aa', marginBottom: '8px', fontSize: '12px'}}
+                        formatter={(value: any) => formatCurrency(value, displayCurrency)}
+                      />
+                      <Bar dataKey="sales" name="Sales" barSize={20} fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                      <Line type="monotone" dataKey="profit" name="Profit" stroke="#10b981" strokeWidth={2} dot={{r: 3}} />
+                      <Area type="monotone" dataKey="ads" name="Ads Spend" stroke="#3b82f6" fill="none" strokeWidth={2} strokeDasharray="5 5" />
+                    </ComposedChart>
+                 </ResponsiveContainer>
             </Card>
         </div>
     );
@@ -1611,8 +1670,8 @@ function SettingsPage() {
     const [editingCountry, setEditingCountry] = useState<CountrySettings | null>(null);
     const [form, setForm] = useState<Partial<CountrySettings>>({});
 
-    const [usdEquivalent, setUsdEquivalent] = useState<string>(''); 
-    const [madEquivalent, setMadEquivalent] = useState<string>(''); 
+    const [usdInput, setUsdInput] = useState<string>(''); 
+    const [madInput, setMadInput] = useState<string>(''); 
 
     const handleSave = () => {
         const payload = { ...form, id: editingCountry?.id || generateId() } as CountrySettings;
@@ -1622,8 +1681,8 @@ function SettingsPage() {
         setShowAdd(false);
         setEditingCountry(null);
         setForm({});
-        setUsdEquivalent('');
-        setMadEquivalent('');
+        setUsdInput('');
+        setMadInput('');
     };
 
     const startEdit = (c: CountrySettings) => {
@@ -1632,21 +1691,21 @@ function SettingsPage() {
         
         // UI USD: 1 USD = (1/X) Local.
         if (c.exchange_rate_to_usd > 0) {
-            setUsdEquivalent((1 / c.exchange_rate_to_usd).toFixed(2));
+            setUsdInput((1 / c.exchange_rate_to_usd).toFixed(2));
             
             // UI MAD: 1 MAD = ? Local
             const ma = countries.find(x => x.code === 'MA');
             const maRate = ma?.exchange_rate_to_usd || 0.1; 
-            setMadEquivalent((maRate / c.exchange_rate_to_usd).toFixed(2));
+            setMadInput((maRate / c.exchange_rate_to_usd).toFixed(2));
         } else {
-            setUsdEquivalent('');
-            setMadEquivalent('');
+            setUsdInput('');
+            setMadInput('');
         }
         setShowAdd(true);
     };
 
     const handleUsdEquivChange = (val: string) => {
-        setUsdEquivalent(val);
+        setUsdInput(val);
         const num = parseFloat(val);
         if (num > 0) {
             setForm(prev => ({ ...prev, exchange_rate_to_usd: 1 / num }));
@@ -1654,7 +1713,7 @@ function SettingsPage() {
     };
 
     const handleMadEquivChange = (val: string) => {
-        setMadEquivalent(val);
+        setMadInput(val);
         // This is just a helper for display/checking, logic prioritizes USD rate internally
     }
 
@@ -1681,14 +1740,14 @@ function SettingsPage() {
                                 <Input 
                                     label={`1 USD = ? ${form.currency_code || 'Local'}`} 
                                     type="number" 
-                                    value={usdEquivalent} 
+                                    value={usdInput} 
                                     onChange={e => handleUsdEquivChange(e.target.value)} 
                                     placeholder="e.g. 680"
                                 />
                                 <Input 
                                     label={`1 MAD = ? ${form.currency_code || 'Local'}`} 
                                     type="number" 
-                                    value={madEquivalent} 
+                                    value={madInput} 
                                     onChange={e => handleMadEquivChange(e.target.value)} 
                                     placeholder="e.g. 68"
                                 />
@@ -1764,6 +1823,92 @@ function ProfilePage() {
                <LogOut size={16} className="mr-2"/> Sign Out
             </Button>
          </div>
+      </Card>
+    </div>
+  );
+}
+
+// --- Auth Page ---
+function AuthPage() {
+  const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      if (isSignUp) {
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+        if (error) throw error;
+        alert('Check your email for the login link!');
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (error) throw error;
+      }
+    } catch (error: any) {
+      alert(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] flex items-center justify-center p-4">
+      <Card className="w-full max-w-md p-8 shadow-2xl border-zinc-200 dark:border-zinc-800 animate-in fade-in zoom-in-95 duration-300">
+        <div className="text-center mb-8">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-accent to-purple-400 flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-accent/20 mx-auto mb-4">
+            CP
+          </div>
+          <h1 className="text-2xl font-light text-zinc-900 dark:text-white mb-2">Welcome Back</h1>
+          <p className="text-sm text-zinc-500">Sign in to your COD Profit dashboard</p>
+        </div>
+        
+        <form onSubmit={handleAuth} className="space-y-4">
+          <Input 
+            label="Email Address" 
+            type="email" 
+            value={email} 
+            onChange={e => setEmail(e.target.value)} 
+            placeholder="name@company.com"
+            required 
+          />
+          <Input 
+            label="Password" 
+            type="password" 
+            value={password} 
+            onChange={e => setPassword(e.target.value)} 
+            placeholder="••••••••"
+            required 
+          />
+          
+          <Button 
+            className="w-full mt-6" 
+            disabled={loading}
+            variant="primary"
+          >
+            {loading ? 'Processing...' : (isSignUp ? 'Create Account' : 'Sign In')}
+          </Button>
+        </form>
+
+        <div className="mt-8 text-center text-xs">
+          <span className="text-zinc-500">
+            {isSignUp ? "Already have an account? " : "Don't have an account? "}
+          </span>
+          <button 
+            onClick={() => setIsSignUp(!isSignUp)}
+            className="text-accent font-medium hover:underline transition-colors"
+          >
+            {isSignUp ? 'Sign In' : 'Sign Up'}
+          </button>
+        </div>
       </Card>
     </div>
   );
