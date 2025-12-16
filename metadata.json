@@ -1,0 +1,5 @@
+{
+  "name": "COD Profit Master",
+  "description": "A premium dashboard for tracking Cash-on-Delivery e-commerce profits, inventory, and expenses with Supabase integration.",
+  "requestFramePermissions": []
+}
