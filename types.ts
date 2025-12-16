@@ -1,10 +1,9 @@
-
 export interface Product {
   id: string;
   name: string;
   price_production: number;
   price_shipping: number;
-  countries: string[]; // Changed from single country string to array
+  country: string;
   note?: string;
   image?: string; // Base64 string for mini image
 }

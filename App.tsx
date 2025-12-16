@@ -65,17 +65,8 @@ const getDateRange = (filter: string, customStart?: string, customEnd?: string) 
   return { start: '2020-01-01', end: '2030-12-31' }; // All time
 };
 
-const formatCurrency = (amount: number, currency: 'USD' | 'MAD') => {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amount);
-};
-
 const downloadTemplate = (type: 'ADS' | 'CHARGES_FIXED' | 'CHARGES_TEST') => {
-    let data: any[] = [];
+    let data = [];
     let name = "template";
     if (type === 'ADS') {
         data = [{ Date: "2023-10-25", Platform: "Facebook", Amount: 150.50, Product: "Smart Watch", Country: "MA" }];
@@ -113,13 +104,11 @@ interface GlobalContextType {
   addSales: (s: Sale[]) => void;
   updateSale: (s: Sale) => void;
   deleteSale: (id: string) => void;
-  deleteSalesForProduct: (productId: string) => void;
 
   addExpense: (e: Expense) => void;
   addExpenses: (e: Expense[]) => void;
   updateExpense: (e: Expense) => void;
   deleteExpense: (id: string) => void;
-  deleteExpensesForProduct: (productId: string) => void;
 
   addCountry: (c: CountrySettings) => void;
   updateCountry: (c: CountrySettings) => void;
@@ -143,7 +132,7 @@ const MOCK_COUNTRIES: CountrySettings[] = [
 ];
 
 const MOCK_PRODUCTS: Product[] = [
-  { id: '1', name: 'Smart Watch Ultra', price_production: 15, price_shipping: 5, countries: ['MA'], note: 'Best seller' },
+  { id: '1', name: 'Smart Watch Ultra', price_production: 15, price_shipping: 5, country: 'MA', note: 'Best seller' },
 ];
 
 const MOCK_SALES: Sale[] = [
@@ -190,21 +179,13 @@ export default function App() {
   const addSales = (newSales: Sale[]) => setSales(prev => [...prev, ...newSales]);
   const updateSale = (s: Sale) => setSales(prev => prev.map(x => x.id === s.id ? s : x));
   const deleteSale = (id: string) => setSales(prev => prev.filter(x => x.id !== id));
-  const deleteSalesForProduct = (productId: string) => setSales(prev => prev.filter(s => s.product_id !== productId));
 
   const addExpense = (e: Expense) => setExpenses(prev => [...prev, e]);
   const addExpenses = (newExpenses: Expense[]) => setExpenses(prev => [...prev, ...newExpenses]);
   const updateExpense = (e: Expense) => setExpenses(prev => prev.map(x => x.id === e.id ? e : x));
   const deleteExpense = (id: string) => setExpenses(prev => prev.filter(x => x.id !== id));
-  const deleteExpensesForProduct = (productId: string) => setExpenses(prev => prev.filter(e => e.product_id !== productId));
 
-  const addCountry = (c: CountrySettings) => {
-      if (c.is_primary) {
-          setCountries(prev => [...prev.map(x => ({...x, is_primary: false})), c]);
-      } else {
-          setCountries(prev => [...prev, c]);
-      }
-  };
+  const addCountry = (c: CountrySettings) => setCountries(prev => [...prev, c]);
   const updateCountry = (c: CountrySettings) => {
     setCountries(prev => {
       let updated = prev.map(country => country.id === c.id ? c : country);
@@ -223,8 +204,8 @@ export default function App() {
     products, sales, expenses, countries,
     refreshData, 
     addProduct, updateProduct, deleteProduct,
-    addSale, addSales, updateSale, deleteSale, deleteSalesForProduct,
-    addExpense, addExpenses, updateExpense, deleteExpense, deleteExpensesForProduct,
+    addSale, addSales, updateSale, deleteSale,
+    addExpense, addExpenses, updateExpense, deleteExpense,
     addCountry, updateCountry, deleteCountry,
     user, loading
   };
@@ -363,20 +344,17 @@ function Dashboard() {
   
   // Filters
   const [dateFilter, setDateFilter] = useState('this_month');
-  const [customStart, setCustomStart] = useState(formatDate(new Date()));
-  const [customEnd, setCustomEnd] = useState(formatDate(new Date()));
   const [selectedCountry, setSelectedCountry] = useState('all');
   const [selectedProduct, setSelectedProduct] = useState('all');
-  const { start, end } = getDateRange(dateFilter, customStart, customEnd);
+  const { start, end } = getDateRange(dateFilter);
 
   const getLocalToDisplayRate = (countryCode: string) => {
     const country = countries.find(c => c.code === countryCode);
     if (!country) return 0;
-    const rateLocalToUSD = country.exchange_rate_to_usd || 0;
+    const rateLocalToUSD = country.exchange_rate_to_usd || 0; // fallback to 0 safely
     if (currency === 'USD') return rateLocalToUSD;
     const madCountry = countries.find(c => c.code === 'MA');
-    const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1;
-    if (madRateToUSD === 0) return 0; 
+    const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1; // Default fallback to avoid div/0
     return rateLocalToUSD * (1 / madRateToUSD);
   };
 
@@ -384,7 +362,6 @@ function Dashboard() {
     if (currency === 'USD') return 1;
     const madCountry = countries.find(c => c.code === 'MA');
     const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1; 
-    if (madRateToUSD === 0) return 0;
     return 1 / madRateToUSD;
   };
 
@@ -409,6 +386,7 @@ function Dashboard() {
     totalSales += s.total_price * localRate;
     const product = products.find(p => p.id === s.product_id);
     if (product) {
+       // Stock is stored in USD
        const productCostUsd = (product.price_production + product.price_shipping);
        totalStockCost += (productCostUsd * s.quantity) * usdRate;
     }
@@ -425,14 +403,15 @@ function Dashboard() {
   });
 
   filteredExpenses.forEach(e => {
-    const val = e.amount * usdRate;
+    const val = e.amount * usdRate; // Expenses are in USD
     if (e.type === 'ADS') totalAds += val;
     if (e.type === 'FIXED') totalFixed += val;
     if (e.type === 'TEST') totalTest += val;
   });
 
   const profit = totalSales - totalStockCost - totalServiceFees - totalAds - totalFixed - totalTest;
-  
+  const currencySymbol = currency === 'USD' ? '$' : 'DH';
+
   const chartData = useMemo(() => {
     const dateMap = new Map<string, {name: string, sales: number, profit: number}>();
     const addData = (date: string, salesAdd: number, profitAdd: number) => {
@@ -489,17 +468,8 @@ function Dashboard() {
                     <option value="this_month">This Month</option>
                     <option value="last_month">Last Month</option>
                     <option value="all">All Time</option>
-                    <option value="custom">Custom Date</option>
                  </select>
              </div>
-
-             {dateFilter === 'custom' && (
-                <div className="flex gap-1 items-center">
-                    <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1.5 text-sm" />
-                    <span className="text-zinc-400">-</span>
-                    <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1.5 text-sm" />
-                </div>
-             )}
 
              <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md">
                  <Filter size={14} className="text-zinc-400"/>
@@ -528,28 +498,28 @@ function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Total Sales" value={formatCurrency(totalSales, currency)} subValue={`${filteredSales.length} Orders`} icon={ShoppingBag} color="text-indigo-500" />
-        <StatCard title="Total Spend" value={formatCurrency(totalStockCost + totalAds + totalServiceFees + totalFixed + totalTest, currency)} subValue="All Expenses" icon={Wallet} color="text-rose-500" />
-        <StatCard title="Ads Spend" value={formatCurrency(totalAds, currency)} subValue="Marketing" icon={Megaphone} color="text-blue-500" />
-        <StatCard title="Net Profit" value={formatCurrency(profit, currency)} subValue={`${totalSales > 0 ? ((profit/totalSales)*100).toFixed(1) : 0}% Margin`} icon={BarChart3} color={profit >= 0 ? "text-emerald-500" : "text-red-500"} />
+        <StatCard title="Total Sales" value={`${currencySymbol} ${totalSales.toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue={`${filteredSales.length} Orders`} icon={ShoppingBag} color="text-indigo-500" />
+        <StatCard title="Total Spend" value={`${currencySymbol} ${(totalStockCost + totalAds + totalServiceFees + totalFixed + totalTest).toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue="All Expenses" icon={Wallet} color="text-rose-500" />
+        <StatCard title="Ads Spend" value={`${currencySymbol} ${totalAds.toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue="Marketing" icon={Megaphone} color="text-blue-500" />
+        <StatCard title="Net Profit" value={`${currencySymbol} ${profit.toLocaleString(undefined, {maximumFractionDigits: 0})}`} subValue={`${totalSales > 0 ? ((profit/totalSales)*100).toFixed(1) : 0}% Margin`} icon={BarChart3} color={profit >= 0 ? "text-emerald-500" : "text-red-500"} />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
          <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
              <div className="text-xs text-zinc-500 uppercase font-medium">Stock Cost</div>
-             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalStockCost, currency)}</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{currencySymbol}{totalStockCost.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
          </div>
          <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
              <div className="text-xs text-zinc-500 uppercase font-medium">Service Fees</div>
-             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalServiceFees, currency)}</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{currencySymbol}{totalServiceFees.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
          </div>
          <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
              <div className="text-xs text-zinc-500 uppercase font-medium">Fixed Charges</div>
-             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalFixed, currency)}</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{currencySymbol}{totalFixed.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
          </div>
          <div className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
              <div className="text-xs text-zinc-500 uppercase font-medium">Test Charges</div>
-             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{formatCurrency(totalTest, currency)}</div>
+             <div className="text-lg font-bold mt-1 text-zinc-900 dark:text-white">{currencySymbol}{totalTest.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
          </div>
       </div>
 
@@ -583,238 +553,1055 @@ function Dashboard() {
   );
 }
 
-// --- Analyze Page ---
-function AnalyzeProductsPage() {
-  const { products, sales, expenses, currency, countries } = useGlobal();
-  
-  // Filters for chart and analysis
-  const [dateRange, setDateRange] = useState<'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'custom'>('this_month');
-  const [customStart, setCustomStart] = useState(formatDate(new Date()));
-  const [customEnd, setCustomEnd] = useState(formatDate(new Date()));
-  const [selectedCountry, setSelectedCountry] = useState('all');
-  const [selectedProduct, setSelectedProduct] = useState('all'); // Allows single product selection
+// --- Sales Page ---
+// (No changes requested, keeping existing logic, but ensuring imports work)
+function SalesPage() {
+  const { sales, addSale, addSales, updateSale, deleteSale, products, countries } = useGlobal();
+  const [mode, setMode] = useState<'list' | 'import' | 'manual'>('list');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const defaultCountry = countries.length > 0 ? countries[0].code : 'MA';
+  const [form, setForm] = useState<Partial<Sale>>({
+    date: formatDate(new Date()),
+    status: OrderStatus.PROCESSED,
+    quantity: 1,
+    country: defaultCountry
+  });
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importData, setImportData] = useState<any[]>([]);
+  const [selectedImportCountry, setSelectedImportCountry] = useState(defaultCountry);
+  const [columns] = useState(['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R']);
+  const [mapping, setMapping] = useState<Record<string, string>>(() => {
+    return JSON.parse(localStorage.getItem('sales_import_mapping') || '{}');
+  });
 
-  const { start, end } = getDateRange(dateRange, customStart, customEnd);
-
-  const getRate = (countryCode: string) => {
-    const country = countries.find(c => c.code === countryCode);
-    if (!country) return 0;
-    const rateLocalToUSD = country.exchange_rate_to_usd || 0;
-    if (currency === 'USD') return rateLocalToUSD;
-    const madCountry = countries.find(c => c.code === 'MA');
-    const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1;
-    if (madRateToUSD === 0) return 0; 
-    return rateLocalToUSD * (1 / madRateToUSD);
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target?.result;
+      const wb = XLSX.read(bstr, { type: 'binary' });
+      const wsname = wb.SheetNames[0];
+      const ws = wb.Sheets[wsname];
+      const data = XLSX.utils.sheet_to_json(ws, { header: 'A' });
+      setImportData(data);
+    };
+    reader.readAsBinaryString(file);
   };
-  
-  const usdDisplayRate = currency === 'USD' ? 1 : (1 / (countries.find(c => c.code === 'MA')?.exchange_rate_to_usd || 0.1));
 
-  // --- Chart Data Logic ---
-  const chartData = useMemo(() => {
-      const dayMap = new Map<string, { date: string, sales: number, profit: number, cost: number, ads: number }>();
-      
-      // Helper to init day
-      const initDay = (d: string) => {
-          if (!dayMap.has(d)) dayMap.set(d, { date: d, sales: 0, profit: 0, cost: 0, ads: 0 });
-      };
+  const calculateFees = (countryCode: string, total: number) => {
+      const cSettings = countries.find(c => c.code === countryCode);
+      const fixed = cSettings?.service_fee || 0;
+      const pct = cSettings?.service_fee_percentage || 0;
+      return fixed + (total * pct / 100);
+  };
 
-      // Filter
-      const relevantSales = sales.filter(s => {
-          if (selectedProduct !== 'all' && s.product_id !== selectedProduct) return false;
-          if (selectedCountry !== 'all' && s.country !== selectedCountry) return false;
-          return s.date >= start && s.date <= end;
-      });
+  const processImport = () => {
+    if (importData.length === 0) return;
+    const newSales: Sale[] = [];
+    let count = 0;
+    let skipped = 0;
+    importData.forEach((row: any) => {
+       const getVal = (field: string) => {
+          const colLetter = mapping[field];
+          if (!colLetter) return undefined;
+          return row[colLetter];
+       };
+       const dateVal = getVal('Date');
+       const totalVal = getVal('Total Price');
+       const prodName = getVal('Product');
+       if (!dateVal || String(dateVal).toLowerCase().includes('date') || !totalVal) {
+          skipped++;
+          return;
+       }
+       const sale: Partial<Sale> = {
+          id: generateId(),
+          date: formatDate(new Date()),
+          status: OrderStatus.PROCESSED,
+          quantity: 1,
+          country: selectedImportCountry
+       };
+       if (typeof dateVal === 'number') {
+           const dateObj = new Date(Math.round((dateVal - 25569)*86400*1000));
+           sale.date = formatDate(dateObj);
+       } else {
+           const d = new Date(String(dateVal));
+           if (!isNaN(d.getTime())) {
+               sale.date = formatDate(d);
+           }
+       }
+       sale.full_name = String(getVal('Full Name') || 'Unknown');
+       sale.phone = String(getVal('Phone') || '');
+       sale.quantity = Number(getVal('Quantity')) || 1;
+       sale.total_price = Number(totalVal) || 0;
+       const targetName = String(prodName || '').trim().toLowerCase();
+       const prod = products.find(p => p.name.trim().toLowerCase() === targetName);
+       if (prod) {
+           sale.product_id = prod.id;
+       } else {
+           skipped++;
+           return; 
+       }
+       const statusRaw = getVal('Status');
+       sale.status = (statusRaw as OrderStatus) || OrderStatus.PROCESSED;
+       sale.delivery_price = calculateFees(sale.country!, sale.total_price!);
+       newSales.push(sale as Sale);
+       count++;
+    });
+    if (newSales.length > 0) {
+        addSales(newSales);
+        alert(`Successfully imported ${count} orders. Skipped ${skipped} rows.`);
+        setMode('list');
+        setImportData([]);
+    } else {
+        alert("No valid sales found to import. Check mapping or file content.");
+    }
+  };
 
-      const relevantExpenses = expenses.filter(e => {
-          if (selectedProduct !== 'all' && e.product_id !== selectedProduct) return false;
-          if (selectedCountry !== 'all' && e.country !== selectedCountry) return false;
-          return e.date >= start && e.date <= end;
-      });
+  const saveMapping = () => {
+    localStorage.setItem('sales_import_mapping', JSON.stringify(mapping));
+    alert('Mapping saved!');
+  };
 
-      relevantSales.forEach(s => {
-          initDay(s.date);
-          const entry = dayMap.get(s.date)!;
-          const rate = getRate(s.country);
-          const revenue = s.total_price * rate;
-          const fees = s.delivery_price * rate;
-          
-          const prod = products.find(p => p.id === s.product_id);
-          const stock = prod ? (prod.price_production + prod.price_shipping) * s.quantity * usdDisplayRate : 0;
+  const handleSave = () => {
+     const delivery_price = calculateFees(form.country!, Number(form.total_price));
+     const payload = {
+       ...form,
+       delivery_price: delivery_price, 
+       total_price: Number(form.total_price),
+       quantity: Number(form.quantity),
+     } as Sale;
+     if (editingId) updateSale({ ...payload, id: editingId });
+     else addSale({ ...payload, id: generateId() });
+     setMode('list');
+     setEditingId(null);
+     setForm({ date: formatDate(new Date()), status: OrderStatus.PROCESSED, quantity: 1, country: defaultCountry });
+  };
 
-          entry.sales += revenue;
-          entry.cost += stock + fees;
-      });
-
-      relevantExpenses.forEach(e => {
-          initDay(e.date);
-          const entry = dayMap.get(e.date)!;
-          const amount = e.amount * usdDisplayRate;
-          if (e.type === 'ADS') entry.ads += amount;
-          else entry.cost += amount; // Charges as cost
-      });
-
-      // Calc profit per day
-      for (const val of dayMap.values()) {
-          val.profit = val.sales - val.cost - val.ads;
-      }
-
-      return Array.from(dayMap.values()).sort((a,b) => a.date.localeCompare(b.date));
-  }, [sales, expenses, products, start, end, selectedProduct, selectedCountry, currency, countries]);
-
-  // --- Table/Summary Logic ---
-  const stats = useMemo(() => {
-    // If a single product is selected, we just show that one product in the list/table logic
-    // If all, we show list of all.
-    const productsToShow = selectedProduct === 'all' ? products : products.filter(p => p.id === selectedProduct);
-
-    return productsToShow.map(product => {
-        const productSales = sales.filter(s => s.product_id === product.id && s.date >= start && s.date <= end && (selectedCountry === 'all' || s.country === selectedCountry));
-        const productExpenses = expenses.filter(e => e.product_id === product.id && e.date >= start && e.date <= end && (selectedCountry === 'all' || e.country === selectedCountry));
-        
-        let revenue = 0;
-        let fees = 0;
-        let stockCost = 0;
-  
-        productSales.forEach(s => {
-            const rate = getRate(s.country);
-            revenue += s.total_price * rate;
-            fees += s.delivery_price * rate;
-            stockCost += (product.price_production + product.price_shipping) * s.quantity * usdDisplayRate;
-        });
-  
-        let marketing = 0;
-        let otherCharges = 0;
-        productExpenses.forEach(e => {
-            const amt = e.amount * usdDisplayRate;
-            if (e.type === 'ADS') marketing += amt;
-            else otherCharges += amt;
-        });
-  
-        const profit = revenue - stockCost - fees - marketing - otherCharges;
-        const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
-        const roi = (stockCost + marketing + otherCharges) > 0 ? (profit / (stockCost + marketing + otherCharges)) * 100 : 0;
-  
-        return {
-            ...product,
-            revenue,
-            profit,
-            margin,
-            roi,
-            salesCount: productSales.length,
-            ads: marketing,
-            charges: otherCharges + fees + stockCost // Total Cost bucket for simple display
-        };
-    }).sort((a,b) => b.profit - a.profit);
-  }, [products, sales, expenses, currency, countries, start, end, selectedProduct, selectedCountry]);
+  const handleEdit = (s: Sale) => {
+      setForm(s);
+      setEditingId(s.id);
+      setMode('manual');
+  };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <h1 className="text-2xl font-light">Product Analysis</h1>
-            
-            {/* Filters */}
-            <div className="flex flex-wrap gap-2 items-center bg-white dark:bg-zinc-800 p-2 rounded-lg border border-zinc-200 dark:border-zinc-700 shadow-sm">
-                 <div className="flex items-center gap-2 px-2 border-r border-zinc-200 dark:border-zinc-700">
-                     <Calendar size={14} className="text-zinc-400"/>
-                     <select value={dateRange} onChange={e => setDateRange(e.target.value as any)} className="bg-transparent text-sm focus:outline-none">
-                        <option value="today">Today</option>
-                        <option value="yesterday">Yesterday</option>
-                        <option value="this_week">This Week</option>
-                        <option value="this_month">This Month</option>
-                        <option value="custom">Custom</option>
-                     </select>
-                 </div>
-                 {dateRange === 'custom' && (
-                    <div className="flex gap-1 items-center px-2 border-r border-zinc-200 dark:border-zinc-700">
-                        <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="bg-transparent text-xs w-24"/>
-                        <span className="text-zinc-400">-</span>
-                        <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="bg-transparent text-xs w-24"/>
-                    </div>
-                 )}
-                 <select value={selectedCountry} onChange={e => setSelectedCountry(e.target.value)} className="bg-transparent text-sm focus:outline-none px-2 border-r border-zinc-200 dark:border-zinc-700">
-                      <option value="all">All Countries</option>
-                      {countries.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
-                 </select>
-                 <select value={selectedProduct} onChange={e => setSelectedProduct(e.target.value)} className="bg-transparent text-sm focus:outline-none px-2 font-medium min-w-[120px]">
-                      <option value="all">All Products</option>
-                      {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                 </select>
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-light">Sales Orders</h1>
+        <div className="flex gap-2">
+           <Button variant="secondary" onClick={() => setMode('import')}><FileSpreadsheet size={16} className="mr-2"/> Import Excel</Button>
+           <Button variant="accent" onClick={() => { setEditingId(null); setMode('manual'); }}><Plus size={16} className="mr-2"/> Add Manual</Button>
+        </div>
+      </div>
+      {mode === 'manual' && (
+         <Card className="animate-in fade-in slide-in-from-top-4 max-w-2xl mx-auto">
+            <h3 className="text-lg font-medium mb-4">{editingId ? 'Edit Order' : 'Add New Order'}</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+               <Input label="Date" type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+               <Input label="Full Name" value={form.full_name} onChange={e => setForm({...form, full_name: e.target.value})} />
+               <Input label="Phone" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} />
+               <Select label="Country" value={form.country} onChange={e => setForm({...form, country: e.target.value})} options={countries.map(c => ({value: c.code, label: c.name}))} />
+               <Select label="Product" value={form.product_id} onChange={e => setForm({...form, product_id: e.target.value})} options={products.map(p => ({value: p.id, label: p.name}))} />
+               <Input label="Quantity" type="number" value={form.quantity} onChange={e => setForm({...form, quantity: Number(e.target.value)})} />
+               <Input label="Total Price (Local Currency)" type="number" value={form.total_price} onChange={e => setForm({...form, total_price: Number(e.target.value)})} />
+               <Select label="Status" value={form.status} onChange={e => setForm({...form, status: e.target.value as OrderStatus})} options={Object.keys(OrderStatus).map(s => ({value: s, label: s}))} />
             </div>
-        </div>
-
-        {/* Chart Section */}
-        <Card className="h-[400px] p-0 overflow-hidden relative">
-             <div className="absolute top-6 left-6 z-10">
-                <h3 className="font-medium text-lg">Performance Trend</h3>
-                <p className="text-xs text-zinc-500">{selectedProduct === 'all' ? 'All Products' : products.find(p => p.id === selectedProduct)?.name}</p>
+            <div className="mt-6 flex justify-end gap-2">
+               <Button variant="ghost" onClick={() => setMode('list')}>Cancel</Button>
+               <Button variant="primary" onClick={handleSave}>Save Order</Button>
+            </div>
+         </Card>
+      )}
+      {mode === 'import' && (
+        <Card className="animate-in fade-in zoom-in-95">
+           <div className="mb-8 text-center">
+              <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx, .xls" className="hidden" />
+              <div onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl p-12 hover:border-accent transition-colors cursor-pointer bg-zinc-50/50 dark:bg-zinc-900/50">
+                  <Upload className="mx-auto h-12 w-12 text-zinc-400 mb-4" />
+                  <h3 className="text-lg font-medium">{importData.length > 0 ? `${importData.length} Rows Loaded` : 'Click to Upload Excel'}</h3>
+              </div>
+           </div>
+           {importData.length > 0 && (
+             <div className="space-y-4">
+                <div className="p-4 bg-zinc-50 dark:bg-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-700">
+                    <Select 
+                        label="Select Country for Import" 
+                        value={selectedImportCountry} 
+                        onChange={e => setSelectedImportCountry(e.target.value)} 
+                        options={countries.map(c => ({value: c.code, label: c.name}))}
+                    />
+                </div>
+                <div className="flex justify-between items-center">
+                    <h4 className="text-sm font-medium uppercase tracking-wider text-zinc-500">Map Columns</h4>
+                    <Button variant="secondary" size="sm" onClick={saveMapping}><Save size={14} className="mr-2"/> Save Mapping</Button>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                   {['Date', 'Full Name', 'Phone', 'Product', 'Quantity', 'Total Price', 'Status'].map(field => (
+                     <div key={field} className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-700">
+                        <label className="text-xs font-bold text-accent mb-1 block">{field}</label>
+                        <Select 
+                          value={mapping[field] || ''} 
+                          onChange={e => setMapping({...mapping, [field]: e.target.value})}
+                          options={[{value: '', label: 'Select Column'}, ...columns.map(c => ({value: c, label: `Column ${c}`}))]} 
+                        />
+                     </div>
+                   ))}
+                </div>
+                <div className="flex justify-end mt-6 gap-3">
+                  <Button variant="ghost" onClick={() => { setImportData([]); setMode('list'); }}>Cancel</Button>
+                  <Button variant="primary" onClick={processImport}>Import Valid Rows</Button>
+                </div>
              </div>
-             <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 80, right: 30, left: 10, bottom: 10 }}>
-                  <defs>
-                     <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.1}/>
-                        <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
-                     </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#333" opacity={0.05} />
-                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#a1a1aa', fontSize: 11}} dy={10} 
-                         tickFormatter={(str) => {
-                             const d = new Date(str);
-                             return `${d.getDate()}/${d.getMonth()+1}`;
-                         }}
-                  />
-                  <Tooltip 
-                    contentStyle={{backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '8px', color: '#fff'}}
-                    itemStyle={{fontSize: '12px'}}
-                    labelStyle={{color: '#a1a1aa', marginBottom: '8px', fontSize: '12px'}}
-                    formatter={(value: any) => formatCurrency(value, currency)}
-                  />
-                  <Bar dataKey="sales" name="Sales" barSize={20} fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                  <Line type="monotone" dataKey="profit" name="Profit" stroke="#10b981" strokeWidth={2} dot={{r: 3}} />
-                  <Area type="monotone" dataKey="ads" name="Ads Spend" stroke="#3b82f6" fill="none" strokeWidth={2} strokeDasharray="5 5" />
-                </ComposedChart>
-             </ResponsiveContainer>
+           )}
+           {importData.length === 0 && <Button variant="ghost" onClick={() => setMode('list')}>Back</Button>}
         </Card>
-
-        {/* Detailed Cards List */}
-        <div className="grid grid-cols-1 gap-4">
-            {stats.map(p => (
-                <Card key={p.id} className="flex flex-col md:flex-row gap-6 items-center p-4">
-                    <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0 flex items-center justify-center">
-                         {p.image ? <img src={p.image} className="w-full h-full object-cover" /> : <Package className="text-zinc-400" size={24}/>}
-                    </div>
-                    <div className="flex-1 w-full text-center md:text-left">
-                        <h3 className="text-lg font-medium">{p.name}</h3>
-                        <p className="text-xs text-zinc-500">{p.salesCount} orders • {p.countries.join(', ')}</p>
-                    </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 w-full md:w-auto text-center">
-                         <div className="p-2 bg-zinc-50 dark:bg-zinc-900 rounded border border-zinc-100 dark:border-zinc-800 min-w-[100px]">
-                             <div className="text-[10px] text-zinc-500 uppercase font-medium">Revenue</div>
-                             <div className="font-mono font-bold text-sm">{formatCurrency(p.revenue, currency)}</div>
-                         </div>
-                         <div className="p-2 bg-zinc-50 dark:bg-zinc-900 rounded border border-zinc-100 dark:border-zinc-800 min-w-[100px]">
-                             <div className="text-[10px] text-zinc-500 uppercase font-medium">Profit</div>
-                             <div className={`font-mono font-bold text-sm ${p.profit >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                                 {formatCurrency(p.profit, currency)}
-                             </div>
-                         </div>
-                         <div className="p-2 bg-zinc-50 dark:bg-zinc-900 rounded border border-zinc-100 dark:border-zinc-800 min-w-[100px]">
-                             <div className="text-[10px] text-zinc-500 uppercase font-medium">Margin</div>
-                             <div className={`font-mono font-bold text-sm ${p.margin >= 20 ? 'text-emerald-500' : 'text-amber-500'}`}>
-                                 {p.margin.toFixed(1)}%
-                             </div>
-                         </div>
-                         <div className="p-2 bg-zinc-50 dark:bg-zinc-900 rounded border border-zinc-100 dark:border-zinc-800 min-w-[100px]">
-                             <div className="text-[10px] text-zinc-500 uppercase font-medium">ROI</div>
-                             <div className="font-mono font-bold text-sm">{p.roi.toFixed(1)}%</div>
-                         </div>
-                    </div>
-                </Card>
-            ))}
-            {stats.length === 0 && <div className="text-center text-zinc-500 py-10">No data found for selection.</div>}
-        </div>
+      )}
+      {mode === 'list' && (
+        <Card className="p-0 overflow-hidden overflow-x-auto border-zinc-200 dark:border-zinc-800">
+          <table className="w-full text-left text-xs md:text-sm whitespace-nowrap">
+            <thead className="bg-zinc-50 dark:bg-zinc-900/50 text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
+              <tr>
+                <th className="px-6 py-4 font-semibold">Date</th>
+                <th className="px-6 py-4 font-semibold">Customer</th>
+                <th className="px-6 py-4 font-semibold">Product</th>
+                <th className="px-6 py-4 font-semibold text-right">Total Pay</th>
+                <th className="px-6 py-4 font-semibold text-center">Status</th>
+                <th className="px-6 py-4 font-semibold text-center">Country</th>
+                <th className="px-6 py-4 font-semibold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/50">
+              {sales.map(s => {
+                const prod = products.find(p => p.id === s.product_id);
+                const net = s.total_price - s.delivery_price;
+                return (
+                <tr key={s.id} className="group hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors">
+                  <td className="px-6 py-4 text-zinc-500">{s.date}</td>
+                  <td className="px-6 py-4 font-medium">
+                      <div className="text-zinc-900 dark:text-zinc-200">{s.full_name}</div>
+                      <div className="text-xs text-zinc-400 font-light">{s.phone}</div>
+                  </td>
+                  <td className="px-6 py-4 text-zinc-600 dark:text-zinc-400">{prod?.name || 'Unknown'}</td>
+                  <td className="px-6 py-4 font-mono font-bold text-emerald-600 dark:text-emerald-400 text-right">{net.toLocaleString()}</td>
+                  <td className="px-6 py-4 text-center">
+                    <Badge variant={s.status === OrderStatus.DELIVERED ? 'success' : s.status === OrderStatus.PAID ? 'info' : 'warning'}>
+                      {s.status}
+                    </Badge>
+                  </td>
+                  <td className="px-6 py-4 text-center"><Badge>{s.country}</Badge></td>
+                  <td className="px-6 py-4 text-right">
+                      <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => handleEdit(s)} className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded text-zinc-400 hover:text-accent"><Edit3 size={14}/></button>
+                        <button onClick={() => deleteSale(s.id)} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-zinc-400 hover:text-red-500"><Trash2 size={14}/></button>
+                      </div>
+                  </td>
+                </tr>
+              )})}
+            </tbody>
+          </table>
+        </Card>
+      )}
     </div>
   );
+}
+
+// --- Stock Page ---
+function StockPage() {
+  const { products, addProduct, updateProduct, deleteProduct, countries, sales, expenses } = useGlobal();
+  const [isEditing, setIsEditing] = useState(false);
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [form, setForm] = useState<Partial<Product>>({
+    name: '',
+    price_production: 0,
+    price_shipping: 0,
+    country: countries[0]?.code || 'MA',
+    note: '',
+    image: ''
+  });
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+              setForm(prev => ({ ...prev, image: reader.result as string }));
+          };
+          reader.readAsDataURL(file);
+      }
+  };
+
+  const handleSubmit = () => {
+    if (!form.name) return;
+    const payload = {
+        id: currentId || generateId(),
+        name: form.name,
+        price_production: Number(form.price_production),
+        price_shipping: Number(form.price_shipping),
+        country: form.country || 'MA',
+        note: form.note || '',
+        image: form.image || ''
+    } as Product;
+    if (currentId) updateProduct(payload);
+    else addProduct(payload);
+    setIsEditing(false);
+    setCurrentId(null);
+    setForm({ name: '', price_production: 0, price_shipping: 0, country: countries[0]?.code || 'MA', note: '', image: '' });
+  };
+
+  const handleEdit = (p: Product) => {
+    setForm(p);
+    setCurrentId(p.id);
+    setIsEditing(true);
+  };
+
+  const handleDelete = (id: string) => {
+    const hasSales = sales.some(s => s.product_id === id);
+    const hasExpenses = expenses.some(e => e.product_id === id);
+    if (hasSales || hasExpenses) {
+        alert("Cannot delete product because it has associated sales or expenses. Please delete associated records first.");
+        return;
+    }
+    if(confirm('Delete this product?')) deleteProduct(id);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-light">Stock Inventory</h1>
+        <Button onClick={() => setIsEditing(true)} variant="accent"><Plus size={16} className="mr-2"/> Add Product</Button>
+      </div>
+      {isEditing && (
+        <Card className="max-w-2xl mx-auto animate-in fade-in slide-in-from-top-4">
+             <h3 className="text-lg font-medium mb-4">{currentId ? 'Edit Product' : 'Add New Product'}</h3>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                    <Input label="Product Name" value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="e.g. Smart Watch" />
+                </div>
+                <Input label="Production Price (USD)" type="number" value={form.price_production} onChange={e => setForm({...form, price_production: parseFloat(e.target.value)})} />
+                <Input label="Shipping Price (USD)" type="number" value={form.price_shipping} onChange={e => setForm({...form, price_shipping: parseFloat(e.target.value)})} />
+                <Select label="Country" value={form.country} onChange={e => setForm({...form, country: e.target.value})} options={countries.map(c => ({value: c.code, label: c.name}))} />
+                <div className="md:col-span-2">
+                    <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider ml-1 mb-1 block">Product Image</label>
+                    <div className="flex items-center gap-4">
+                        <div onClick={() => fileInputRef.current?.click()} className="w-20 h-20 rounded-lg border-2 border-dashed border-zinc-300 dark:border-zinc-700 flex items-center justify-center cursor-pointer hover:border-accent hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors overflow-hidden relative">
+                            {form.image ? (
+                                <img src={form.image} className="w-full h-full object-cover" />
+                            ) : (
+                                <ImageIcon className="text-zinc-400" size={24}/>
+                            )}
+                        </div>
+                        <div className="text-xs text-zinc-500">
+                             <p>Click to upload a mini image.</p>
+                             <p>Stored as Base64 (Keep it small)</p>
+                        </div>
+                        <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/*" />
+                    </div>
+                </div>
+                <Input label="Note (Optional)" value={form.note} onChange={e => setForm({...form, note: e.target.value})} className="md:col-span-2" />
+             </div>
+             <div className="flex justify-end gap-2 mt-6">
+                 <Button variant="ghost" onClick={() => { setIsEditing(false); setCurrentId(null); }}>Cancel</Button>
+                 <Button onClick={handleSubmit}>Save Product</Button>
+             </div>
+        </Card>
+      )}
+      <Card className="p-0 overflow-hidden">
+        <table className="w-full text-left text-sm">
+            <thead className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-200 dark:border-zinc-800 text-zinc-500">
+                <tr>
+                    <th className="px-6 py-4 font-semibold w-20">Image</th>
+                    <th className="px-6 py-4 font-semibold">Product Name</th>
+                    <th className="px-6 py-4 font-semibold">Country</th>
+                    <th className="px-6 py-4 font-semibold">Production</th>
+                    <th className="px-6 py-4 font-semibold">Shipping</th>
+                    <th className="px-6 py-4 font-semibold">Total Cost</th>
+                    <th className="px-6 py-4 font-semibold text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/50">
+                {products.map(p => (
+                    <tr key={p.id} className="group hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors">
+                        <td className="px-6 py-3">
+                            <div className="w-10 h-10 rounded bg-zinc-100 dark:bg-zinc-800 overflow-hidden flex items-center justify-center">
+                                {p.image ? <img src={p.image} className="w-full h-full object-cover"/> : <Package size={16} className="text-zinc-400"/>}
+                            </div>
+                        </td>
+                        <td className="px-6 py-3 font-medium text-zinc-900 dark:text-zinc-100">{p.name}</td>
+                        <td className="px-6 py-3"><Badge>{p.country}</Badge></td>
+                        <td className="px-6 py-3 text-zinc-500">${p.price_production}</td>
+                        <td className="px-6 py-3 text-zinc-500">${p.price_shipping}</td>
+                        <td className="px-6 py-3 font-mono font-bold text-accent">${(p.price_production + p.price_shipping).toFixed(2)}</td>
+                        <td className="px-6 py-3 text-right">
+                            <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={() => handleEdit(p)} className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded text-zinc-400 hover:text-accent"><Edit3 size={14}/></button>
+                                <button onClick={() => handleDelete(p.id)} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-zinc-400 hover:text-red-500"><Trash2 size={14}/></button>
+                            </div>
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+// --- Ads Page ---
+function AdsPage() {
+    const { expenses, addExpense, updateExpense, deleteExpense, addExpenses, products, countries } = useGlobal();
+    const [mode, setMode] = useState<'list' | 'import' | 'manual'>('list');
+    const [currentId, setCurrentId] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const adsExpenses = expenses.filter(e => e.type === 'ADS');
+    const [form, setForm] = useState<Partial<Expense>>({
+        date: formatDate(new Date()),
+        amount: 0,
+        type: 'ADS',
+        platform: 'Facebook',
+        product_id: products[0]?.id || '',
+        country: countries[0]?.code || 'MA',
+    });
+
+    const handleSubmit = () => {
+        const payload = {
+            ...form,
+            id: currentId || generateId(),
+            amount: Number(form.amount),
+            type: 'ADS',
+        } as Expense;
+        if (currentId) updateExpense(payload);
+        else addExpense(payload);
+        setMode('list');
+        setCurrentId(null);
+        setForm({ date: formatDate(new Date()), amount: 0, type: 'ADS', platform: 'Facebook', product_id: products[0]?.id || '', country: countries[0]?.code || 'MA' });
+    };
+
+    const handleEdit = (e: Expense) => {
+        setForm(e);
+        setCurrentId(e.id);
+        setMode('manual');
+    };
+
+    const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            const bstr = evt.target?.result;
+            const wb = XLSX.read(bstr, { type: 'binary' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const data: any[] = XLSX.utils.sheet_to_json(ws);
+            const newExpenses: Expense[] = [];
+            let count = 0;
+            data.forEach(row => {
+                 const dateRaw = row['Date'] || row['date'];
+                 const amount = row['Amount'] || row['amount'] || row['Spend'];
+                 if (!dateRaw || !amount) return; 
+                 let dateStr = formatDate(new Date());
+                 if (typeof dateRaw === 'number') {
+                     dateStr = formatDate(new Date(Math.round((dateRaw - 25569)*86400*1000)));
+                 } else {
+                     dateStr = String(dateRaw).substring(0, 10);
+                 }
+                 const prodName = row['Product'] || row['product'];
+                 const targetName = String(prodName || '').trim().toLowerCase();
+                 const prod = products.find(p => p.name.trim().toLowerCase() === targetName);
+                 const exp: Expense = {
+                     id: generateId(),
+                     date: dateStr,
+                     amount: Number(amount),
+                     type: 'ADS',
+                     platform: row['Platform'] || 'Facebook',
+                     country: row['Country'] || countries[0].code,
+                     product_id: prod ? prod.id : '' 
+                 };
+                 newExpenses.push(exp);
+                 count++;
+            });
+            if (count > 0) {
+                addExpenses(newExpenses);
+                alert(`Imported ${count} ad spend entries.`);
+                setMode('list');
+            } else {
+                alert("No valid rows found. Ensure columns: Date, Amount, Platform");
+            }
+        };
+        reader.readAsBinaryString(file);
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="flex justify-between items-center">
+                <h1 className="text-2xl font-light">Ads Spend</h1>
+                <div className="flex gap-2">
+                    <Button variant="secondary" onClick={() => setMode('import')}><FileSpreadsheet size={16} className="mr-2"/> Import Excel</Button>
+                    <Button onClick={() => { setCurrentId(null); setMode('manual'); }} variant="accent"><Plus size={16} className="mr-2"/> Record Ad Spend</Button>
+                </div>
+            </div>
+            {mode === 'import' && (
+                <Card className="animate-in fade-in zoom-in-95">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-lg font-medium">Import Ads Spend</h3>
+                        <Button variant="ghost" onClick={() => downloadTemplate('ADS')} size="sm">
+                            <Download size={14} className="mr-2"/> Download Template
+                        </Button>
+                    </div>
+                    <div className="mb-8 text-center">
+                        <input type="file" ref={fileInputRef} onChange={handleImport} accept=".xlsx, .xls" className="hidden" />
+                        <div onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl p-12 hover:border-accent transition-colors cursor-pointer bg-zinc-50/50 dark:bg-zinc-900/50">
+                            <Upload className="mx-auto h-12 w-12 text-zinc-400 mb-4" />
+                            <h3 className="text-lg font-medium">Click to Upload Excel</h3>
+                            <p className="text-sm text-zinc-500 mt-1">Columns: Date, Platform, Amount, Country, Product</p>
+                        </div>
+                    </div>
+                    <div className="flex justify-end">
+                        <Button variant="ghost" onClick={() => setMode('list')}>Cancel</Button>
+                    </div>
+                </Card>
+            )}
+            {mode === 'manual' && (
+                <Card className="max-w-2xl mx-auto animate-in fade-in slide-in-from-top-4">
+                    <h3 className="text-lg font-medium mb-4">{currentId ? 'Edit Ad Spend' : 'New Ad Spend'}</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Input label="Date" type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                        <Input label="Amount (USD)" type="number" value={form.amount} onChange={e => setForm({...form, amount: parseFloat(e.target.value)})} />
+                        <Select label="Platform" value={form.platform} onChange={e => setForm({...form, platform: e.target.value})} options={[{value:'Facebook', label:'Facebook'}, {value:'TikTok', label:'TikTok'}, {value:'Google', label:'Google'}, {value:'Snapchat', label:'Snapchat'}]} />
+                        <Select label="Product" value={form.product_id} onChange={e => setForm({...form, product_id: e.target.value})} options={products.map(p => ({value: p.id, label: p.name}))} />
+                        <Select label="Country" value={form.country} onChange={e => setForm({...form, country: e.target.value})} options={countries.map(c => ({value: c.code, label: c.name}))} />
+                    </div>
+                    <div className="flex justify-end gap-2 mt-6">
+                        <Button variant="ghost" onClick={() => { setMode('list'); setCurrentId(null); }}>Cancel</Button>
+                        <Button onClick={handleSubmit}>Save Entry</Button>
+                    </div>
+                </Card>
+            )}
+            {mode === 'list' && (
+                <Card className="p-0 overflow-hidden">
+                    <table className="w-full text-left text-sm">
+                        <thead className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-200 dark:border-zinc-800">
+                            <tr>
+                                <th className="px-6 py-4 font-semibold">Date</th>
+                                <th className="px-6 py-4 font-semibold">Platform</th>
+                                <th className="px-6 py-4 font-semibold">Product</th>
+                                <th className="px-6 py-4 font-semibold">Country</th>
+                                <th className="px-6 py-4 font-semibold text-right">Amount (USD)</th>
+                                <th className="px-6 py-4 font-semibold text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                            {adsExpenses.map(e => (
+                                <tr key={e.id} className="group hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
+                                    <td className="px-6 py-4 text-zinc-500">{e.date}</td>
+                                    <td className="px-6 py-4">{e.platform}</td>
+                                    <td className="px-6 py-4">{products.find(p => p.id === e.product_id)?.name || 'Unknown'}</td>
+                                    <td className="px-6 py-4"><Badge>{e.country}</Badge></td>
+                                    <td className="px-6 py-4 text-right font-mono">${e.amount.toFixed(2)}</td>
+                                    <td className="px-6 py-4 text-right">
+                                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100">
+                                            <button onClick={() => handleEdit(e)} className="hover:text-accent"><Edit3 size={14}/></button>
+                                            <button onClick={() => deleteExpense(e.id)} className="hover:text-red-500"><Trash2 size={14}/></button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                            {adsExpenses.length === 0 && (
+                                <tr><td colSpan={6} className="px-6 py-8 text-center text-zinc-500">No ads spend recorded yet.</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </Card>
+            )}
+        </div>
+    );
+}
+
+// --- Charges Page Component Factory ---
+const ChargesPageComponent = ({ 
+    type, 
+    title, 
+    templateType 
+}: { 
+    type: 'FIXED' | 'TEST', 
+    title: string, 
+    templateType: 'CHARGES_FIXED' | 'CHARGES_TEST' 
+}) => {
+    const { expenses, addExpense, updateExpense, deleteExpense, addExpenses, countries, products } = useGlobal();
+    const [mode, setMode] = useState<'list' | 'import' | 'manual'>('list');
+    const [currentId, setCurrentId] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const charges = expenses.filter(e => e.type === type);
+
+    const [form, setForm] = useState<Partial<Expense>>({
+        date: formatDate(new Date()),
+        amount: 0,
+        type: type,
+        name: '',
+        country: countries[0]?.code || 'MA',
+        product_id: '',
+        note: ''
+    });
+
+    const handleSubmit = () => {
+        const payload = {
+            ...form,
+            id: currentId || generateId(),
+            amount: Number(form.amount),
+            type: type
+        } as Expense;
+        if (currentId) updateExpense(payload);
+        else addExpense(payload);
+        setMode('list');
+        setCurrentId(null);
+        setForm({ date: formatDate(new Date()), amount: 0, type: type, name: '', country: countries[0]?.code || 'MA', product_id: '', note: '' });
+    };
+
+    const handleEdit = (e: Expense) => {
+        setForm(e);
+        setCurrentId(e.id);
+        setMode('manual');
+    };
+
+    const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+             const bstr = evt.target?.result;
+             const wb = XLSX.read(bstr, { type: 'binary' });
+             const ws = wb.Sheets[wb.SheetNames[0]];
+             const data: any[] = XLSX.utils.sheet_to_json(ws);
+             const newExpenses: Expense[] = [];
+             let count = 0;
+             data.forEach(row => {
+                 const dateRaw = row['Date'] || row['date'];
+                 const amount = row['Amount'] || row['amount'];
+                 if (!dateRaw || !amount) return;
+                 let dateStr = formatDate(new Date());
+                 if (typeof dateRaw === 'number') {
+                     dateStr = formatDate(new Date(Math.round((dateRaw - 25569)*86400*1000)));
+                 } else {
+                     dateStr = String(dateRaw).substring(0, 10);
+                 }
+                 const prodName = row['Product'] || row['product'];
+                 const targetName = String(prodName || '').trim().toLowerCase();
+                 const prod = products.find(p => p.name.trim().toLowerCase() === targetName);
+                 newExpenses.push({
+                     id: generateId(),
+                     date: dateStr,
+                     amount: Number(amount),
+                     type: type,
+                     name: row['Description'] || row['Name'] || '',
+                     platform: row['Platform'] || '',
+                     country: row['Country'] || countries[0].code,
+                     product_id: prod ? prod.id : '',
+                     note: row['Note'] || ''
+                 });
+                 count++;
+             });
+             if (count > 0) {
+                 addExpenses(newExpenses);
+                 alert(`Imported ${count} charges.`);
+                 setMode('list');
+             }
+        };
+        reader.readAsBinaryString(file);
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="flex justify-between items-center">
+                <h1 className="text-2xl font-light">{title}</h1>
+                <div className="flex gap-2">
+                    <Button variant="secondary" onClick={() => setMode('import')}><FileSpreadsheet size={16} className="mr-2"/> Import Excel</Button>
+                    <Button onClick={() => { setCurrentId(null); setMode('manual'); }} variant="accent"><Plus size={16} className="mr-2"/> Add Charge</Button>
+                </div>
+            </div>
+            {mode === 'import' && (
+                <Card className="animate-in fade-in zoom-in-95">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-lg font-medium">Import {title}</h3>
+                        <Button variant="ghost" onClick={() => downloadTemplate(templateType)} size="sm">
+                            <Download size={14} className="mr-2"/> Download Template
+                        </Button>
+                    </div>
+                    <div className="mb-8 text-center">
+                        <input type="file" ref={fileInputRef} onChange={handleImport} accept=".xlsx, .xls" className="hidden" />
+                        <div onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl p-12 hover:border-accent transition-colors cursor-pointer bg-zinc-50/50 dark:bg-zinc-900/50">
+                            <Upload className="mx-auto h-12 w-12 text-zinc-400 mb-4" />
+                            <h3 className="text-lg font-medium">Click to Upload Excel</h3>
+                            <p className="text-sm text-zinc-500 mt-1">
+                                Columns: Date, Amount, Country, Product, {type === 'FIXED' ? 'Description' : 'Platform'} {type === 'TEST' && ', Note'}
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex justify-end">
+                        <Button variant="ghost" onClick={() => setMode('list')}>Cancel</Button>
+                    </div>
+                </Card>
+            )}
+            {mode === 'manual' && (
+                <Card className="max-w-2xl mx-auto animate-in fade-in slide-in-from-top-4">
+                    <h3 className="text-lg font-medium mb-4">{currentId ? 'Edit Charge' : 'New Charge'}</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Input label="Date" type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                        <Input label="Amount (USD)" type="number" value={form.amount} onChange={e => setForm({...form, amount: parseFloat(e.target.value)})} />
+                        {type === 'FIXED' ? (
+                             <Input label="Description" value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="e.g. Office Rent" />
+                        ) : (
+                             <Input label="Platform" value={form.platform} onChange={e => setForm({...form, platform: e.target.value})} placeholder="e.g. TikTok Test" />
+                        )}
+                        <Select label="Country" value={form.country} onChange={e => setForm({...form, country: e.target.value})} options={countries.map(c => ({value: c.code, label: c.name}))} />
+                        <Select label="Product (Optional)" value={form.product_id} onChange={e => setForm({...form, product_id: e.target.value})} options={[{value:'', label:'No Product'}, ...products.map(p => ({value: p.id, label: p.name}))]} />
+                        {type === 'TEST' && (
+                            <Input label="Note" value={form.note || ''} onChange={e => setForm({...form, note: e.target.value})} placeholder="e.g. Initial test phase 1" className="md:col-span-2"/>
+                        )}
+                    </div>
+                    <div className="flex justify-end gap-2 mt-6">
+                        <Button variant="ghost" onClick={() => { setMode('list'); setCurrentId(null); }}>Cancel</Button>
+                        <Button onClick={handleSubmit}>Save Charge</Button>
+                    </div>
+                </Card>
+            )}
+            {mode === 'list' && (
+                <Card className="p-0 overflow-hidden">
+                    <table className="w-full text-left text-sm">
+                        <thead className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-200 dark:border-zinc-800">
+                            <tr>
+                                <th className="px-6 py-4 font-semibold">Date</th>
+                                <th className="px-6 py-4 font-semibold">{type === 'FIXED' ? 'Description' : 'Platform'}</th>
+                                <th className="px-6 py-4 font-semibold">Product</th>
+                                <th className="px-6 py-4 font-semibold">Country</th>
+                                {type === 'TEST' && <th className="px-6 py-4 font-semibold">Note</th>}
+                                <th className="px-6 py-4 font-semibold text-right">Amount (USD)</th>
+                                <th className="px-6 py-4 font-semibold text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                            {charges.map(e => (
+                                <tr key={e.id} className="group hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
+                                    <td className="px-6 py-4 text-zinc-500">{e.date}</td>
+                                    <td className="px-6 py-4">{type === 'FIXED' ? e.name : e.platform || '-'}</td>
+                                    <td className="px-6 py-4">{products.find(p => p.id === e.product_id)?.name || '-'}</td>
+                                    <td className="px-6 py-4"><Badge>{e.country}</Badge></td>
+                                    {type === 'TEST' && <td className="px-6 py-4 text-zinc-500 italic truncate max-w-[150px]">{e.note || '-'}</td>}
+                                    <td className="px-6 py-4 text-right font-mono">${e.amount.toFixed(2)}</td>
+                                    <td className="px-6 py-4 text-right">
+                                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100">
+                                            <button onClick={() => handleEdit(e)} className="hover:text-accent"><Edit3 size={14}/></button>
+                                            <button onClick={() => deleteExpense(e.id)} className="hover:text-red-500"><Trash2 size={14}/></button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                             {charges.length === 0 && (
+                                <tr><td colSpan={7} className="px-6 py-8 text-center text-zinc-500">No records found.</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </Card>
+            )}
+        </div>
+    );
+};
+
+const FixedChargesPage = () => <ChargesPageComponent type="FIXED" title="Fixed Charges" templateType="CHARGES_FIXED" />;
+const TestChargesPage = () => <ChargesPageComponent type="TEST" title="Test Charges" templateType="CHARGES_TEST" />;
+
+// --- Auth Page ---
+function AuthPage() {
+  const [isLogin, setIsLogin] = useState(true);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      if (isLogin) {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-zinc-50 dark:bg-[#09090b] flex items-center justify-center p-4">
+      <Card className="w-full max-w-md">
+        <h2 className="text-2xl font-bold mb-6 text-center">{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
+        {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4">{error}</div>}
+        <form onSubmit={handleAuth} className="space-y-4">
+          <Input label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
+          <Input label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+          <Button type="submit" className="w-full" disabled={loading}>
+            {loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Sign Up')}
+          </Button>
+        </form>
+        <div className="mt-4 text-center text-sm text-zinc-500">
+          {isLogin ? "Don't have an account? " : "Already have an account? "}
+          <button onClick={() => setIsLogin(!isLogin)} className="text-accent font-medium hover:underline">
+            {isLogin ? 'Sign Up' : 'Sign In'}
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// --- Analyze Products Page (Restored) ---
+function AnalyzeProductsPage() {
+    const { products, sales, expenses, countries, currency } = useGlobal();
+    
+    // Filters State
+    const [dateRange, setDateRange] = useState<'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'custom'>('this_month');
+    const [customStart, setCustomStart] = useState(formatDate(new Date()));
+    const [customEnd, setCustomEnd] = useState(formatDate(new Date()));
+    const [filterCountry, setFilterCountry] = useState('all');
+    const [filterProduct, setFilterProduct] = useState('all');
+    const [displayCurrency, setDisplayCurrency] = useState<'USD' | 'MAD'>('USD');
+
+    const { start, end } = getDateRange(dateRange, customStart, customEnd);
+
+    // Helpers
+    const getLocalToDisplayRate = (countryCode: string) => {
+        const country = countries.find(c => c.code === countryCode);
+        if (!country) return 0;
+        const rateLocalToUSD = country.exchange_rate_to_usd || 0;
+        if (displayCurrency === 'USD') return rateLocalToUSD;
+        const madCountry = countries.find(c => c.code === 'MA');
+        const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1;
+        return rateLocalToUSD * (1 / madRateToUSD);
+    };
+
+    const getUsdToDisplayRate = () => {
+        if (displayCurrency === 'USD') return 1;
+        const madCountry = countries.find(c => c.code === 'MA');
+        const madRateToUSD = madCountry?.exchange_rate_to_usd || 0.1;
+        return 1 / madRateToUSD;
+    };
+
+    const usdRate = getUsdToDisplayRate();
+    const currencySym = displayCurrency === 'USD' ? '$' : 'DH';
+
+    // Filtering
+    const filteredSales = sales.filter(s => {
+        if (filterCountry !== 'all' && s.country !== filterCountry) return false;
+        if (filterProduct !== 'all' && s.product_id !== filterProduct) return false;
+        return s.date >= start && s.date <= end;
+    });
+
+    const filteredExpenses = expenses.filter(e => {
+        if (filterCountry !== 'all' && e.country !== filterCountry) return false;
+        if (filterProduct !== 'all' && e.product_id !== filterProduct) return false;
+        return e.date >= start && e.date <= end;
+    });
+
+    // Metrics
+    let totalSales = 0;
+    let totalStock = 0; 
+    let totalServiceFees = 0; 
+    let totalAds = 0;
+    let totalCharges = 0;
+
+    filteredSales.forEach(s => {
+        const rate = getLocalToDisplayRate(s.country);
+        totalSales += s.total_price * rate;
+        totalServiceFees += s.delivery_price * rate;
+
+        const prod = products.find(p => p.id === s.product_id);
+        if (prod) {
+            totalStock += ((prod.price_production + prod.price_shipping) * s.quantity) * usdRate;
+        }
+    });
+
+    filteredExpenses.forEach(e => {
+        const val = e.amount * usdRate;
+        if (e.type === 'ADS') totalAds += val;
+        if (e.type === 'FIXED' || e.type === 'TEST') totalCharges += val;
+    });
+
+    const totalProfit = totalSales - totalStock - totalServiceFees - totalAds - totalCharges;
+
+    return (
+        <div className="space-y-6">
+            {/* Header */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                 <div>
+                    <h1 className="text-2xl font-light">Product Analysis</h1>
+                    <p className="text-sm text-zinc-500">Deep dive into product performance and profitability.</p>
+                 </div>
+                 
+                 {/* Filters */}
+                 <div className="flex flex-wrap gap-2 items-center bg-white dark:bg-zinc-800 p-2 rounded-lg border border-zinc-200 dark:border-zinc-700 shadow-sm w-full md:w-auto">
+                      <div className="flex items-center gap-2 px-2">
+                         <Filter size={14} className="text-zinc-400"/>
+                         <select value={dateRange} onChange={e => setDateRange(e.target.value as any)} className="bg-transparent text-sm focus:outline-none">
+                            <option value="today">Today</option>
+                            <option value="yesterday">Yesterday</option>
+                            <option value="this_week">This Week</option>
+                            <option value="this_month">This Month</option>
+                            <option value="custom">Custom Date</option>
+                         </select>
+                      </div>
+                      
+                      {dateRange === 'custom' && (
+                          <div className="flex gap-1">
+                             <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 text-xs" />
+                             <span className="text-zinc-400">-</span>
+                             <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 text-xs" />
+                          </div>
+                      )}
+
+                      <div className="w-[1px] h-4 bg-zinc-300 dark:bg-zinc-600 mx-1"></div>
+
+                      <select value={filterCountry} onChange={e => setFilterCountry(e.target.value)} className="bg-transparent text-sm focus:outline-none max-w-[100px]">
+                          <option value="all">All Countries</option>
+                          {countries.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+                      </select>
+
+                      <select value={filterProduct} onChange={e => setFilterProduct(e.target.value)} className="bg-transparent text-sm focus:outline-none max-w-[100px]">
+                          <option value="all">All Products</option>
+                          {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                      
+                      <div className="w-[1px] h-4 bg-zinc-300 dark:bg-zinc-600 mx-1"></div>
+                      
+                      <select value={displayCurrency} onChange={e => setDisplayCurrency(e.target.value as any)} className="bg-transparent text-sm font-bold text-accent focus:outline-none">
+                          <option value="USD">USD</option>
+                          <option value="MAD">MAD</option>
+                      </select>
+                 </div>
+            </div>
+
+            {/* KPI Cards Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                <Card className="p-4 flex flex-col justify-between h-28 border-l-4 border-l-indigo-500">
+                    <span className="text-xs text-zinc-500 uppercase font-medium">Sales</span>
+                    <div>
+                        <div className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{currencySym}{totalSales.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
+                        <div className="text-[10px] text-zinc-400">{filteredSales.length} orders</div>
+                    </div>
+                </Card>
+                <Card className="p-4 flex flex-col justify-between h-28 border-l-4 border-l-rose-500">
+                    <span className="text-xs text-zinc-500 uppercase font-medium">Stock Cost</span>
+                    <div>
+                        <div className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{currencySym}{totalStock.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
+                        <div className="text-[10px] text-zinc-400">COGS + Ship</div>
+                    </div>
+                </Card>
+                <Card className="p-4 flex flex-col justify-between h-28 border-l-4 border-l-orange-500">
+                    <span className="text-xs text-zinc-500 uppercase font-medium">Service Fees</span>
+                    <div>
+                        <div className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{currencySym}{totalServiceFees.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
+                        <div className="text-[10px] text-zinc-400">COD / Delivery</div>
+                    </div>
+                </Card>
+                <Card className="p-4 flex flex-col justify-between h-28 border-l-4 border-l-blue-500">
+                    <span className="text-xs text-zinc-500 uppercase font-medium">Ads Spend</span>
+                    <div>
+                        <div className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{currencySym}{totalAds.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
+                    </div>
+                </Card>
+                <Card className="p-4 flex flex-col justify-between h-28 border-l-4 border-l-yellow-500">
+                    <span className="text-xs text-zinc-500 uppercase font-medium">Charges</span>
+                    <div>
+                        <div className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{currencySym}{totalCharges.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
+                        <div className="text-[10px] text-zinc-400">Fixed + Test</div>
+                    </div>
+                </Card>
+                <Card className={`p-4 flex flex-col justify-between h-28 border-l-4 ${totalProfit >= 0 ? 'border-l-emerald-500' : 'border-l-red-500'}`}>
+                    <span className="text-xs text-zinc-500 uppercase font-medium">Net Profit</span>
+                    <div>
+                        <div className={`text-lg font-bold ${totalProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{currencySym}{totalProfit.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
+                        <div className="text-[10px] text-zinc-400">Margin: {totalSales > 0 ? ((totalProfit/totalSales)*100).toFixed(1) : 0}%</div>
+                    </div>
+                </Card>
+            </div>
+
+            {/* Detailed Table */}
+            <Card className="p-0 overflow-hidden">
+                <table className="w-full text-left text-xs">
+                    <thead className="bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-700 font-semibold uppercase tracking-wider">
+                        <tr>
+                            <th className="px-4 py-3">Product / Entity</th>
+                            <th className="px-4 py-3 text-right">Sales</th>
+                            <th className="px-4 py-3 text-right">Stock Cost</th>
+                            <th className="px-4 py-3 text-right">Fees</th>
+                            <th className="px-4 py-3 text-right">Ads</th>
+                            <th className="px-4 py-3 text-right">Charges</th>
+                            <th className="px-4 py-3 text-right">Profit</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800 text-zinc-700 dark:text-zinc-300">
+                        {/* Overall Row */}
+                        <tr className="bg-zinc-50/50 dark:bg-zinc-800/30 font-bold">
+                            <td className="px-4 py-3">ALL (Summary)</td>
+                            <td className="px-4 py-3 text-right">{currencySym}{totalSales.toFixed(0)}</td>
+                            <td className="px-4 py-3 text-right">{currencySym}{totalStock.toFixed(0)}</td>
+                            <td className="px-4 py-3 text-right">{currencySym}{totalServiceFees.toFixed(0)}</td>
+                            <td className="px-4 py-3 text-right">{currencySym}{totalAds.toFixed(0)}</td>
+                            <td className="px-4 py-3 text-right">{currencySym}{totalCharges.toFixed(0)}</td>
+                            <td className={`px-4 py-3 text-right ${totalProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {currencySym}{totalProfit.toFixed(0)}
+                            </td>
+                        </tr>
+
+                        {filterProduct === 'all' && products.map(prod => {
+                             const pSales = filteredSales.filter(s => s.product_id === prod.id);
+                             const pExpenses = filteredExpenses.filter(e => e.product_id === prod.id);
+                             if (pSales.length === 0 && pExpenses.length === 0) return null;
+
+                             let pTotalSales = 0;
+                             let pTotalStock = 0;
+                             let pTotalFees = 0;
+                             
+                             pSales.forEach(s => {
+                                 const rate = getLocalToDisplayRate(s.country);
+                                 pTotalSales += s.total_price * rate;
+                                 pTotalFees += s.delivery_price * rate;
+                                 pTotalStock += ((prod.price_production + prod.price_shipping) * s.quantity) * usdRate;
+                             });
+                             
+                             let pTotalAds = 0;
+                             pExpenses.forEach(e => { if (e.type === 'ADS') pTotalAds += e.amount * usdRate; });
+
+                             let pTotalCharges = 0; 
+                             pExpenses.forEach(e => { if (e.type !== 'ADS') pTotalCharges += e.amount * usdRate; });
+
+                             const pProfit = pTotalSales - pTotalStock - pTotalFees - pTotalAds - pTotalCharges;
+
+                             return (
+                                <tr key={prod.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
+                                    <td className="px-4 py-3 font-medium flex items-center gap-2">
+                                        {prod.image && <img src={prod.image} className="w-6 h-6 rounded object-cover" />}
+                                        {prod.name}
+                                    </td>
+                                    <td className="px-4 py-3 text-right">{currencySym}{pTotalSales.toFixed(0)}</td>
+                                    <td className="px-4 py-3 text-right">{currencySym}{pTotalStock.toFixed(0)}</td>
+                                    <td className="px-4 py-3 text-right">{currencySym}{pTotalFees.toFixed(0)}</td>
+                                    <td className="px-4 py-3 text-right">{currencySym}{pTotalAds.toFixed(0)}</td>
+                                    <td className="px-4 py-3 text-right">{currencySym}{pTotalCharges.toFixed(0)}</td>
+                                    <td className={`px-4 py-3 text-right ${pProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                        {currencySym}{pProfit.toFixed(0)}
+                                    </td>
+                                </tr>
+                             );
+                        })}
+                    </tbody>
+                </table>
+            </Card>
+        </div>
+    );
 }
 
 // --- Settings Page ---
@@ -824,9 +1611,8 @@ function SettingsPage() {
     const [editingCountry, setEditingCountry] = useState<CountrySettings | null>(null);
     const [form, setForm] = useState<Partial<CountrySettings>>({});
 
-    // Manual inputs
-    const [usdInput, setUsdInput] = useState<string>(''); 
-    const [madInput, setMadInput] = useState<string>(''); 
+    const [usdEquivalent, setUsdEquivalent] = useState<string>(''); 
+    const [madEquivalent, setMadEquivalent] = useState<string>(''); 
 
     const handleSave = () => {
         const payload = { ...form, id: editingCountry?.id || generateId() } as CountrySettings;
@@ -836,24 +1622,41 @@ function SettingsPage() {
         setShowAdd(false);
         setEditingCountry(null);
         setForm({});
-        setUsdInput('');
-        setMadInput('');
+        setUsdEquivalent('');
+        setMadEquivalent('');
     };
 
     const startEdit = (c: CountrySettings) => {
         setEditingCountry(c);
         setForm(c);
         
+        // UI USD: 1 USD = (1/X) Local.
         if (c.exchange_rate_to_usd > 0) {
-            setUsdInput((1 / c.exchange_rate_to_usd).toFixed(2));
-            // Show rough MAD estimate
-            setMadInput((0.1 / c.exchange_rate_to_usd).toFixed(2));
+            setUsdEquivalent((1 / c.exchange_rate_to_usd).toFixed(2));
+            
+            // UI MAD: 1 MAD = ? Local
+            const ma = countries.find(x => x.code === 'MA');
+            const maRate = ma?.exchange_rate_to_usd || 0.1; 
+            setMadEquivalent((maRate / c.exchange_rate_to_usd).toFixed(2));
         } else {
-            setUsdInput('');
-            setMadInput('');
+            setUsdEquivalent('');
+            setMadEquivalent('');
         }
         setShowAdd(true);
     };
+
+    const handleUsdEquivChange = (val: string) => {
+        setUsdEquivalent(val);
+        const num = parseFloat(val);
+        if (num > 0) {
+            setForm(prev => ({ ...prev, exchange_rate_to_usd: 1 / num }));
+        }
+    };
+
+    const handleMadEquivChange = (val: string) => {
+        setMadEquivalent(val);
+        // This is just a helper for display/checking, logic prioritizes USD rate internally
+    }
 
     return (
         <div className="max-w-4xl mx-auto space-y-8">
@@ -873,27 +1676,24 @@ function SettingsPage() {
                              <Input label="Code (e.g. MA)" value={form.code} onChange={e => setForm({...form, code: e.target.value})} />
                              <Input label="Currency Code" value={form.currency_code} onChange={e => setForm({...form, currency_code: e.target.value})} />
                              
-                             <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 dark:bg-zinc-800 p-4 rounded-lg">
+                             {/* Exchange Rate Inputs */}
+                             <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <Input 
                                     label={`1 USD = ? ${form.currency_code || 'Local'}`} 
                                     type="number" 
-                                    value={usdInput} 
-                                    onChange={e => {
-                                        setUsdInput(e.target.value);
-                                        const val = parseFloat(e.target.value);
-                                        if (val > 0) setForm({...form, exchange_rate_to_usd: 1/val});
-                                    }} 
-                                    placeholder="e.g. 600"
+                                    value={usdEquivalent} 
+                                    onChange={e => handleUsdEquivChange(e.target.value)} 
+                                    placeholder="e.g. 680"
                                 />
                                 <Input 
                                     label={`1 MAD = ? ${form.currency_code || 'Local'}`} 
                                     type="number" 
-                                    value={madInput} 
-                                    onChange={e => setMadInput(e.target.value)} 
-                                    placeholder="e.g. 60"
+                                    value={madEquivalent} 
+                                    onChange={e => handleMadEquivChange(e.target.value)} 
+                                    placeholder="e.g. 68"
                                 />
                                 <p className="text-xs text-zinc-500 md:col-span-2">
-                                    Enter conversion rates manually. 
+                                    Manual rates entry. (Internal logic uses USD rate)
                                 </p>
                              </div>
 
@@ -902,7 +1702,7 @@ function SettingsPage() {
                              
                              <div className="flex items-center gap-2 mt-6">
                                 <input type="checkbox" checked={form.is_primary} onChange={e => setForm({...form, is_primary: e.target.checked})} className="h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent" />
-                                <label className="text-sm">Set as Primary Country</label>
+                                <label className="text-sm">Set as Primary Country (Base for Calculations)</label>
                              </div>
                         </div>
                         <div className="flex justify-end gap-2 mt-4">
@@ -926,7 +1726,7 @@ function SettingsPage() {
                                 <div className="text-right">
                                     <div className="text-xs text-zinc-400">1 USD =</div>
                                     <div className="font-mono text-sm font-bold">
-                                        {c.exchange_rate_to_usd > 0 ? (1/c.exchange_rate_to_usd).toFixed(2) : '-'} {c.currency_code}
+                                        {(1/c.exchange_rate_to_usd).toFixed(2)} {c.currency_code}
                                     </div>
                                 </div>
                                 <Button variant="ghost" size="sm" onClick={() => startEdit(c)}><Edit3 size={14} /></Button>
@@ -940,314 +1740,31 @@ function SettingsPage() {
     )
 }
 
-function AuthPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
-  const [error, setError] = useState<string | null>(null);
+// --- Profile Page ---
+function ProfilePage() {
+  const { user } = useGlobal();
+  const navigate = useNavigate();
 
-  const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-      }
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate('/');
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#09090b] text-white p-4">
-      <Card className="w-full max-w-md border-zinc-800 bg-zinc-900/50 backdrop-blur-xl">
-        <h2 className="text-2xl font-light mb-6 text-center">COD Profit</h2>
-        {error && <div className="p-3 mb-4 text-sm bg-red-500/10 text-red-500 rounded border border-red-500/20">{error}</div>}
-        <form onSubmit={handleAuth} className="space-y-4">
-          <Input label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="name@example.com" />
-          <Input label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" />
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Processing...' : (mode === 'signin' ? 'Sign In' : 'Sign Up')}
-          </Button>
-        </form>
-        <div className="mt-4 text-center text-sm text-zinc-500">
-          {mode === 'signin' ? "Don't have an account? " : "Already have an account? "}
-          <button onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')} className="text-accent hover:underline">
-            {mode === 'signin' ? 'Sign Up' : 'Sign In'}
-          </button>
-        </div>
+    <div className="max-w-md mx-auto mt-10">
+      <Card className="text-center p-8">
+         <div className="w-20 h-20 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4">
+            <UserCircle size={40} className="text-zinc-400"/>
+         </div>
+         <h2 className="text-xl font-bold mb-1">{user?.email}</h2>
+         <p className="text-sm text-zinc-500 mb-6">User ID: {user?.id}</p>
+         
+         <div className="border-t border-zinc-100 dark:border-zinc-800 pt-6">
+            <Button variant="secondary" onClick={handleLogout} className="w-full text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">
+               <LogOut size={16} className="mr-2"/> Sign Out
+            </Button>
+         </div>
       </Card>
     </div>
   );
-}
-
-function StockPage() {
-  const { products, addProduct, updateProduct, deleteProduct, countries } = useGlobal();
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [form, setForm] = useState<Partial<Product>>({});
-
-  const handleSubmit = () => {
-     const payload = { 
-       ...form, 
-       id: editingProduct ? editingProduct.id : generateId(),
-       countries: form.countries || []
-     } as Product;
-     
-     if (editingProduct) updateProduct(payload);
-     else addProduct(payload);
-     
-     setIsModalOpen(false);
-     setEditingProduct(null);
-     setForm({});
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-light">Stock Management</h1>
-        <Button onClick={() => { setEditingProduct(null); setForm({}); setIsModalOpen(true); }}><Plus size={16} className="mr-2" /> Add Product</Button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-         {products.map(p => (
-             <Card key={p.id} className="relative group hover:border-accent/30 transition-all">
-                 <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
-                     <button onClick={() => { setEditingProduct(p); setForm(p); setIsModalOpen(true); }} className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"><Edit3 size={14}/></button>
-                     <button onClick={() => { if(window.confirm('Delete?')) deleteProduct(p.id); }} className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 rounded"><Trash2 size={14}/></button>
-                 </div>
-                 <div className="flex items-center gap-4">
-                     <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-800 rounded-lg flex items-center justify-center shrink-0">
-                         <Package size={20} className="text-zinc-400"/>
-                     </div>
-                     <div className="overflow-hidden">
-                         <h3 className="font-medium truncate">{p.name}</h3>
-                         <p className="text-xs text-zinc-500">Prod: {formatCurrency(p.price_production, 'USD')} | Ship: {formatCurrency(p.price_shipping, 'USD')}</p>
-                     </div>
-                 </div>
-                 <div className="mt-4 flex gap-1 flex-wrap">
-                     {p.countries.map(c => <Badge key={c}>{c}</Badge>)}
-                 </div>
-             </Card>
-         ))}
-      </div>
-
-      {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-              <Card className="w-full max-w-lg">
-                  <h3 className="text-xl font-light mb-4">{editingProduct ? 'Edit Product' : 'New Product'}</h3>
-                  <div className="space-y-4">
-                      <Input label="Name" value={form.name || ''} onChange={e => setForm({...form, name: e.target.value})} />
-                      <div className="grid grid-cols-2 gap-4">
-                          <Input label="Production Cost (USD)" type="number" value={form.price_production || 0} onChange={e => setForm({...form, price_production: parseFloat(e.target.value)})} />
-                          <Input label="Shipping Cost (USD)" type="number" value={form.price_shipping || 0} onChange={e => setForm({...form, price_shipping: parseFloat(e.target.value)})} />
-                      </div>
-                      <div>
-                          <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider ml-1 block mb-2">Countries</label>
-                          <div className="flex gap-2 flex-wrap">
-                              {countries.map(c => (
-                                  <button key={c.code} onClick={() => {
-                                      const cur = form.countries || [];
-                                      setForm({...form, countries: cur.includes(c.code) ? cur.filter(x => x !== c.code) : [...cur, c.code]});
-                                  }} className={`px-3 py-1 text-xs rounded-full border ${ (form.countries || []).includes(c.code) ? 'bg-zinc-900 text-white dark:bg-white dark:text-black' : 'border-zinc-200 dark:border-zinc-700' }`}>
-                                      {c.name}
-                                  </button>
-                              ))}
-                          </div>
-                      </div>
-                  </div>
-                  <div className="flex justify-end gap-2 mt-6">
-                      <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-                      <Button onClick={handleSubmit}>Save</Button>
-                  </div>
-              </Card>
-          </div>
-      )}
-    </div>
-  );
-}
-
-function SalesPage() {
-    const { sales, products, addSales } = useGlobal();
-    const fileInputRef = useRef<HTMLInputElement>(null);
-
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-            const bstr = evt.target?.result;
-            const wb = XLSX.read(bstr, { type: 'binary' });
-            const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-            const newSales = data.map((row: any) => ({
-                id: generateId(),
-                date: row.Date || formatDate(new Date()),
-                full_name: row['Full Name'] || 'Unknown',
-                phone: row.Phone || '',
-                product_id: products.find(p => p.name === row.Product)?.id || '',
-                quantity: Number(row.Quantity) || 1,
-                total_price: Number(row['Total Price']) || 0,
-                delivery_price: Number(row['Delivery Price']) || 0,
-                status: OrderStatus.DELIVERED,
-                country: row.Country || 'MA'
-            })).filter((s: any) => s.product_id);
-            addSales(newSales);
-        };
-        reader.readAsBinaryString(file);
-    };
-
-    return (
-        <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <h1 className="text-2xl font-light">Sales</h1>
-                <div className="flex gap-2">
-                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xlsx" />
-                    <Button variant="secondary" onClick={() => fileInputRef.current?.click()}><Upload size={16} className="mr-2"/> Import Excel</Button>
-                </div>
-            </div>
-            <Card className="overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
-                        <thead className="text-xs uppercase bg-zinc-50 dark:bg-zinc-900/50 text-zinc-500">
-                            <tr>
-                                <th className="px-4 py-3">Date</th>
-                                <th className="px-4 py-3">Customer</th>
-                                <th className="px-4 py-3">Product</th>
-                                <th className="px-4 py-3">Total</th>
-                                <th className="px-4 py-3">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                            {sales.slice().reverse().slice(0, 50).map(s => (
-                                <tr key={s.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
-                                    <td className="px-4 py-3 whitespace-nowrap">{s.date}</td>
-                                    <td className="px-4 py-3">{s.full_name}<div className="text-xs text-zinc-500">{s.phone}</div></td>
-                                    <td className="px-4 py-3">{products.find(p => p.id === s.product_id)?.name}</td>
-                                    <td className="px-4 py-3 font-mono">{s.total_price}</td>
-                                    <td className="px-4 py-3"><Badge>{s.status}</Badge></td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </Card>
-        </div>
-    )
-}
-
-function AdsPage() {
-    return <ExpensePage type="ADS" title="Ads Spend" />;
-}
-
-function FixedChargesPage() {
-    return <ExpensePage type="FIXED" title="Fixed Charges" />;
-}
-
-function TestChargesPage() {
-    return <ExpensePage type="TEST" title="Test Charges" />;
-}
-
-function ExpensePage({ type, title }: { type: 'ADS' | 'FIXED' | 'TEST', title: string }) {
-    const { expenses, addExpenses, products, deleteExpense } = useGlobal();
-    const fileInputRef = useRef<HTMLInputElement>(null);
-
-    const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-             const bstr = evt.target?.result;
-             const wb = XLSX.read(bstr, { type: 'binary' });
-             const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-             const newExpenses = data.map((row: any) => ({
-                 id: generateId(),
-                 date: row.Date,
-                 amount: Number(row.Amount),
-                 type,
-                 platform: row.Platform,
-                 name: row.Description || row.Name,
-                 product_id: products.find(p => p.name === row.Product)?.id,
-                 country: row.Country || 'MA',
-                 note: row.Note
-             })).filter((e: any) => type === 'FIXED' ? true : e.product_id); 
-             addExpenses(newExpenses);
-        };
-        reader.readAsBinaryString(file);
-    };
-
-    return (
-        <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <h1 className="text-2xl font-light">{title}</h1>
-                <div className="flex gap-2">
-                    <Button variant="ghost" onClick={() => downloadTemplate(type === 'FIXED' ? 'CHARGES_FIXED' : (type === 'TEST' ? 'CHARGES_TEST' : 'ADS'))}><Download size={16} className="mr-2"/> Template</Button>
-                    <input type="file" ref={fileInputRef} onChange={handleImport} className="hidden" accept=".xlsx" />
-                    <Button variant="secondary" onClick={() => fileInputRef.current?.click()}><Upload size={16} className="mr-2"/> Import</Button>
-                </div>
-            </div>
-            <Card className="overflow-hidden">
-                <table className="w-full text-sm text-left">
-                    <thead className="text-xs uppercase bg-zinc-50 dark:bg-zinc-900/50 text-zinc-500">
-                        <tr>
-                            <th className="px-4 py-3">Date</th>
-                            <th className="px-4 py-3">Description/Platform</th>
-                            {type !== 'FIXED' && <th className="px-4 py-3">Product</th>}
-                            <th className="px-4 py-3">Amount</th>
-                            <th className="px-4 py-3">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                        {expenses.filter(e => e.type === type).map(e => (
-                            <tr key={e.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
-                                <td className="px-4 py-3 whitespace-nowrap">{e.date}</td>
-                                <td className="px-4 py-3">{e.platform || e.name || '-'}</td>
-                                {type !== 'FIXED' && <td className="px-4 py-3">{products.find(p => p.id === e.product_id)?.name || '-'}</td>}
-                                <td className="px-4 py-3 font-mono">{e.amount}</td>
-                                <td className="px-4 py-3">
-                                    <button onClick={() => deleteExpense(e.id)} className="text-red-500 hover:text-red-700"><Trash2 size={14}/></button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-                 {expenses.filter(e => e.type === type).length === 0 && <div className="p-8 text-center text-zinc-500">No records found.</div>}
-            </Card>
-        </div>
-    )
-}
-
-function ProfilePage() {
-    const { user } = useGlobal();
-    const navigate = useNavigate();
-    
-    const handleLogout = async () => {
-        await supabase.auth.signOut();
-        navigate('/');
-    };
-
-    return (
-        <div className="max-w-md mx-auto mt-20 space-y-6">
-            <h1 className="text-2xl font-light text-center">User Profile</h1>
-            <Card className="flex flex-col items-center p-8 gap-4">
-                <div className="w-20 h-20 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center text-3xl">
-                    <UserCircle size={40} className="text-zinc-400" />
-                </div>
-                <div className="text-center">
-                    <div className="font-medium text-lg">{user?.email}</div>
-                    <div className="text-sm text-zinc-500">User ID: {user?.id}</div>
-                </div>
-                <Button variant="secondary" className="w-full mt-4" onClick={handleLogout}>
-                    <LogOut size={16} className="mr-2" /> Sign Out
-                </Button>
-            </Card>
-        </div>
-    )
 }
